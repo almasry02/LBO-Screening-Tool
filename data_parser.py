@@ -1,5 +1,9 @@
 """
-Data Parser v2 – Moodys Orbis Excel Format + Generic Excel
+Data Parser v3 – Moodys Orbis 4-Sheet Excel + Generic Excel
+─────────────────────────────────────────────────────────────────────────────
+Extracts full 10-year historical time series from Moodys Orbis exports.
+Builds HistoricalYear objects for use in HistoricalAnalyzer.
+─────────────────────────────────────────────────────────────────────────────
 """
 
 import pandas as pd
@@ -8,11 +12,18 @@ import sys, os
 from datetime import date
 from typing import Optional
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from finance_engine import CompanyInputs
+from finance_engine import (
+    CompanyInputs, HistoricalYear, HistoricalMetrics, HistoricalAnalyzer
+)
+
+
+# ─────────────────────────────────────────────
+# DISPLAY LABELS
+# ─────────────────────────────────────────────
 
 REQUIRED_FIELDS = {
     "revenue":              "Umsatz / Revenue",
@@ -20,55 +31,96 @@ REQUIRED_FIELDS = {
     "ebit":                 "EBIT",
     "depreciation":         "D&A / Abschreibungen",
     "interest_expense":     "Zinsaufwand / Interest Expense",
-    "tax_rate":             "Steuerquote / Tax Rate (0–1)",
+    "tax_rate":             "Steuerquote / Tax Rate",
+    "net_income":           "Jahresüberschuss / Net Income",
     "total_debt":           "Gesamtschulden / Total Debt",
     "cash":                 "Cash / Zahlungsmittel",
     "net_working_capital":  "Net Working Capital",
     "capex":                "CapEx / Investitionen",
 }
 
+
+# ─────────────────────────────────────────────
+# ROW LABEL ALIASES  (DE + EN, Moodys Orbis)
+# ─────────────────────────────────────────────
+
 ROW_ALIASES = {
     "revenue": [
-        "umsatz", "betriebsertrag (umsatz)", "umsatzerlöse",
-        "net sales", "revenue", "total revenue", "net revenue", "sales", "operating revenue",
+        "betriebsertrag (umsatz)",
+        "umsatz",
+        "umsatzerlöse",
+        "net sales",
+        "revenue",
+        "total revenue",
+        "net revenue",
+        "sales",
+        "operating revenue",
     ],
     "ebitda": [
-        "ebitda", "ebitda spanne",
+        "ebitda",
         "earnings before interest taxes depreciation amortization",
     ],
     "ebit": [
-        "betriebsgewinn/-verlust [=ebit]", "ebit", "operating profit",
-        "operating income", "operating result", "betriebsergebnis",
+        "betriebsgewinn/-verlust [=ebit]",
+        "ebit",
+        "operating profit",
+        "operating income",
+        "operating result",
+        "betriebsergebnis",
     ],
     "depreciation": [
-        "wertminderungen & abschreibungen", "abschreibungen", "afa", "d&a",
-        "depreciation", "depreciation & amortization", "amortization",
+        "wertminderungen & abschreibungen",
+        "abschreibungen",
+        "afa",
+        "d&a",
+        "depreciation",
+        "depreciation & amortization",
+        "amortization",
     ],
     "interest_expense": [
-        "zinsaufwand", "finanzaufwendungen", "interest expense",
-        "finance costs", "net interest expense", "zinsen", "financial expense",
+        "zinsaufwand",
+        "finanzaufwendungen",
+        "interest expense",
+        "finance costs",
+        "net interest expense",
     ],
     "tax_rate": [
         "∟ steuern",
-        "tax expense", "income taxes", "steueraufwand",
+        "tax expense",
+        "income taxes",
+        "steueraufwand",
     ],
     "pretax_profit": [
         "gewinn/verlust vor steuern",
-        "∟ gewinn/verlust vor steuern",
         "profit before tax",
         "income before tax",
         "ebt",
     ],
+    "net_income": [
+        "jahresüberschuss/-fehlbetrag",
+        "gewinn/verlust nach steuern",
+        "net income",
+        "net profit",
+        "profit after tax",
+        "jahresüberschuss",
+    ],
     "total_debt": [
-        "langfristige finanzschulden", "∟ langfristige finanzschulden",
-        "kurzfristige finanzschulden", "∟ kurzfristige finanzschulden",
-        "vergebene kredite", "∟ vergebene kredite",
-        "total debt", "financial debt", "gross debt",
-        "gesamtschulden", "bankverbindlichkeiten",
+        "langfristige finanzschulden",
+        "kurzfristige finanzschulden",
+        "vergebene kredite",
+        "total debt",
+        "financial debt",
+        "gross debt",
+        "gesamtschulden",
+        "bankverbindlichkeiten",
     ],
     "cash": [
         "zahlungsmittel & zahlungsmitteläquivalente",
-        "cash", "cash & equivalents", "kasse", "kassenbestand", "flüssige mittel",
+        "cash",
+        "cash & equivalents",
+        "kasse",
+        "kassenbestand",
+        "flüssige mittel",
     ],
     "net_working_capital": [
         "∟ working capital",
@@ -83,7 +135,6 @@ ROW_ALIASES = {
         "sachanlagen-zugänge",
         "zugänge sachanlagen",
         "anlagezugänge",
-        "additions to property",
         "additions to fixed assets",
         "investitionen in sachanlagen",
         "purchase of property",
@@ -91,19 +142,24 @@ ROW_ALIASES = {
 }
 
 MOODYS_SHEET_PRIORITY = {
-    "revenue":          ["GuV-Rechnung", "P&L", "Income Statement"],
-    "ebitda":           ["GuV-Rechnung", "P&L", "Income Statement"],
-    "ebit":             ["GuV-Rechnung", "P&L", "Income Statement"],
-    "depreciation":     ["GuV-Rechnung", "P&L", "Income Statement"],
-    "interest_expense": ["GuV-Rechnung", "P&L", "Income Statement"],
-    "tax_rate":         ["GuV-Rechnung", "P&L", "Income Statement"],
-    "pretax_profit":    ["GuV-Rechnung", "P&L", "Income Statement"],
-    "total_debt":       ["Bilanz", "Balance Sheet"],
-    "cash":             ["Bilanz", "Balance Sheet"],
+    "revenue":           ["GuV-Rechnung", "P&L", "Income Statement"],
+    "ebitda":            ["GuV-Rechnung", "P&L", "Income Statement"],
+    "ebit":              ["GuV-Rechnung", "P&L", "Income Statement"],
+    "depreciation":      ["GuV-Rechnung", "P&L", "Income Statement"],
+    "interest_expense":  ["GuV-Rechnung", "P&L", "Income Statement"],
+    "tax_rate":          ["GuV-Rechnung", "P&L", "Income Statement"],
+    "pretax_profit":     ["GuV-Rechnung", "P&L", "Income Statement"],
+    "net_income":        ["GuV-Rechnung", "P&L", "Income Statement"],
+    "total_debt":        ["Bilanz", "Balance Sheet"],
+    "cash":              ["Bilanz", "Balance Sheet"],
     "net_working_capital": ["Bilanz", "Balance Sheet"],
-    "capex":            ["GuV-Rechnung", "P&L", "Bilanz", "Balance Sheet"],
+    "capex":             ["GuV-Rechnung", "P&L", "Bilanz", "Balance Sheet"],
 }
 
+
+# ─────────────────────────────────────────────
+# CURRENCY / UNIT DETECTION
+# ─────────────────────────────────────────────
 
 def detect_currency_and_unit(unit_string: str) -> dict:
     s = str(unit_string).lower().strip()
@@ -117,12 +173,12 @@ def detect_currency_and_unit(unit_string: str) -> dict:
     else:
         unit_label, scale_to_millions, raw_unit = "Einzelwert", 0.000001, "units"
     return {
-        "currency": currency,
-        "unit_label": unit_label,
-        "raw_unit": raw_unit,
+        "currency":         currency,
+        "unit_label":       unit_label,
+        "raw_unit":         raw_unit,
         "scale_to_millions": scale_to_millions,
-        "display": f"{currency} ({unit_label})",
-        "symbol": "€" if currency == "EUR" else "$" if currency == "USD" else "",
+        "display":          f"{currency} ({unit_label})",
+        "symbol":           "€" if currency == "EUR" else "$" if currency == "USD" else "",
     }
 
 
@@ -140,26 +196,41 @@ def excel_serial_to_year(serial) -> Optional[int]:
     return None
 
 
+# ─────────────────────────────────────────────
+# MOODYS ORBIS PARSER
+# ─────────────────────────────────────────────
+
 class MoodysOrbisParser:
+    """
+    Parses Bureau van Dijk / Moodys Orbis 4-sheet Excel export.
+    Extracts full historical time series → builds HistoricalYear list.
+    """
+
     def __init__(self):
-        self.sheets: dict = {}
-        self.company_name: str = "Unknown"
+        self.sheets:        dict = {}
+        self.company_name:  str  = "Unknown"
         self.currency_info: dict = {}
-        self.years: list = []
-        self.raw_data: dict = {}
-        self.warnings: list = []
+        self.years:         list = []
+        self.raw_data:      dict = {}   # field → {year: value}
+        self.warnings:      list = []
         self.is_moodys_format: bool = False
 
     def load(self, file) -> bool:
         try:
             import openpyxl
             wb = openpyxl.load_workbook(file, data_only=True, read_only=True)
-            self.sheets = {sname: list(wb[sname].iter_rows(values_only=True)) for sname in wb.sheetnames}
+            self.sheets = {
+                sname: list(wb[sname].iter_rows(values_only=True))
+                for sname in wb.sheetnames
+            }
         except Exception as e:
             self.warnings.append(f"Ladefehler: {e}")
             return False
 
-        moodys_keys = {"Bilanz", "GuV-Rechnung", "Kennzahlen", "Cover", "Balance Sheet", "P&L", "Income Statement"}
+        moodys_keys = {
+            "Bilanz", "GuV-Rechnung", "Kennzahlen", "Cover",
+            "Balance Sheet", "P&L", "Income Statement", "Ratios"
+        }
         self.is_moodys_format = len(moodys_keys & set(self.sheets.keys())) >= 2
         if not self.is_moodys_format:
             return False
@@ -168,6 +239,8 @@ class MoodysOrbisParser:
         self._extract_years_and_currency()
         self._extract_all_fields()
         return True
+
+    # ── Internal extraction ───────────────────
 
     def _extract_company_name(self):
         for sheet_key in ["Cover"] + list(self.sheets.keys()):
@@ -193,7 +266,7 @@ class MoodysOrbisParser:
                     return
         if not self.currency_info:
             self.currency_info = detect_currency_and_unit("EUR")
-            self.warnings.append("⚠️ Währung nicht erkannt – EUR als Default")
+            self.warnings.append("⚠️ Währung nicht erkannt – EUR Default")
 
     def _extract_all_fields(self):
         for field, sheet_priority in MOODYS_SHEET_PRIORITY.items():
@@ -214,8 +287,6 @@ class MoodysOrbisParser:
                         self.raw_data[field] = result
                         found = True
                         break
-            if not found:
-                self.warnings.append(f"⚠️ '{field}' nicht gefunden")
 
     def _find_field_in_sheet(self, field: str, rows: list) -> Optional[dict]:
         aliases = ROW_ALIASES.get(field, [])
@@ -240,7 +311,7 @@ class MoodysOrbisParser:
         if val is None:
             return None
         if isinstance(val, (int, float)):
-            return None if val != val else float(val)
+            return None if (val != val) else float(val)
         s = str(val).strip().lower()
         if s in ("n.v.", "n.s.", "n/a", "", "-", "—"):
             return None
@@ -249,88 +320,108 @@ class MoodysOrbisParser:
         except Exception:
             return None
 
-    def get_latest_year_values(self) -> dict:
-        if not self.years:
-            return {}
-        latest = self.years[0]
-        result = {}
-        for field, year_data in self.raw_data.items():
-            if latest in year_data:
-                result[field] = year_data[latest]
-            elif year_data:
-                result[field] = year_data[sorted(year_data.keys(), reverse=True)[0]]
-        return result
+    # ── Public API ────────────────────────────
 
-    def get_timeseries(self) -> pd.DataFrame:
+    def get_timeseries_df(self) -> pd.DataFrame:
+        """Full time series as DataFrame, newest year first"""
         if not self.years:
             return pd.DataFrame()
-        data = {}
-        for field, year_data in self.raw_data.items():
-            data[field] = {yr: year_data.get(yr) for yr in self.years}
+        data = {field: {yr: self.raw_data[field].get(yr) for yr in self.years}
+                for field in self.raw_data}
         return pd.DataFrame(data, index=self.years).sort_index(ascending=False)
 
-    def build_company_inputs(self, manual_overrides={}, use_year=None) -> tuple:
-        if use_year:
-            vals = {f: self.raw_data[f].get(use_year) for f in self.raw_data
-                    if use_year in self.raw_data.get(f, {})}
-        else:
-            vals = self.get_latest_year_values()
-        vals.update(manual_overrides)
+    def build_historical_years(self, selected_years: Optional[list] = None) -> list[HistoricalYear]:
+        """
+        Build HistoricalYear list from raw_data.
+        selected_years: subset of self.years to use (None = all available)
+        """
+        use_years = sorted(selected_years or self.years)
+        hist_years = []
+
+        for yr in use_years:
+            def get(field, default=0.0):
+                d = self.raw_data.get(field, {})
+                v = d.get(yr)
+                return v if v is not None else default
+
+            # Derive tax rate from expense / pretax
+            tax_exp   = get("tax_rate")    # actually the expense amount
+            pretax    = get("pretax_profit")
+            if pretax and pretax > 0 and tax_exp > 0 and tax_exp < pretax:
+                tax_rate = tax_exp / pretax
+            else:
+                tax_rate = 0.25
+
+            # CapEx: use actual if found, else 75% of D&A (maintenance proxy)
+            dep   = get("depreciation")
+            capex = get("capex")
+            if capex == 0.0:
+                capex = dep * 0.75
+
+            hist_years.append(HistoricalYear(
+                year                = yr,
+                revenue             = get("revenue"),
+                ebitda              = get("ebitda"),
+                ebit                = get("ebit"),
+                depreciation        = dep,
+                interest_expense    = get("interest_expense"),
+                net_income          = get("net_income"),
+                total_debt          = get("total_debt"),
+                cash                = get("cash"),
+                net_working_capital = get("net_working_capital"),
+                capex               = capex,
+                tax_rate            = tax_rate,
+            ))
+
+        return [y for y in hist_years if y.revenue > 0]
+
+    def build_company_inputs(
+        self,
+        hist_metrics: HistoricalMetrics,
+        latest_year_data: "HistoricalYear",
+    ) -> tuple[CompanyInputs, list]:
+        """
+        Build CompanyInputs from normalized historical metrics.
+        Uses latest year balance sheet + normalized P&L from historical average.
+        """
         warnings = list(self.warnings)
 
-        def get(f, d=0.0):
-            v = vals.get(f)
-            if v is None:
-                warnings.append(f"⚠️ '{f}' fehlt – Default verwendet")
-                return d
-            return v
-
-        ebitda = get("ebitda")
-        dep = get("depreciation")
-
-        # Derive tax rate: steuern / gewinn_vor_steuern
-        tax_expense = vals.get("tax_rate")       # actually tax expense (from "Steuern" row)
-        pretax      = vals.get("pretax_profit")  # "Gewinn/Verlust vor Steuern"
-        if tax_expense and pretax and pretax > 0 and tax_expense < pretax:
-            tax_rate = tax_expense / pretax
-        elif tax_expense and pretax and pretax > 0:
-            tax_rate = 0.25
-            warnings.append(f"⚠️ Steuersatz-Ableitung unplausibel ({tax_expense:.0f}/{pretax:.0f}) – 25% Default")
-        else:
-            tax_rate = 0.25
-            warnings.append("⚠️ Steuersatz nicht ableitbar – 25% Default")
-
-        # CapEx fallback: Moodys Orbis rarely has explicit CapEx
-        # Use D&A as maintenance CapEx proxy if CapEx == 0 (conservative)
-        capex_val = vals.get("capex")
-        if not capex_val or capex_val == 0:
-            capex_val = dep * 0.75  # maintenance CapEx ~ 75% of D&A
-            warnings.append("ℹ️ CapEx nicht gefunden – 75% der D&A als Maintenance-CapEx angesetzt")
-
-        # Total debt: sum long-term + short-term if both available
-        debt_val = get("total_debt")
-        # If debt = 0 but we have both lt and st entries, it means the company is debt-free
-        # This is valid for Glock
-
         inputs = CompanyInputs(
-            revenue=get("revenue"), ebitda=ebitda,
-            ebit=vals.get("ebit") or (ebitda - dep),
-            depreciation=dep, interest_expense=get("interest_expense"),
-            tax_rate=tax_rate, total_debt=debt_val,
-            cash=get("cash"), net_working_capital=get("net_working_capital"),
-            capex=capex_val, company_name=self.company_name,
+            revenue             = hist_metrics.normalized_revenue,
+            ebitda              = hist_metrics.normalized_ebitda,
+            ebit                = (hist_metrics.normalized_ebitda
+                                   - latest_year_data.depreciation),
+            depreciation        = latest_year_data.depreciation,
+            interest_expense    = latest_year_data.interest_expense,
+            tax_rate            = latest_year_data.tax_rate,
+            total_debt          = latest_year_data.total_debt,
+            cash                = latest_year_data.cash,
+            net_working_capital = latest_year_data.net_working_capital,
+            capex               = hist_metrics.normalized_capex,
+            company_name        = self.company_name,
+            currency_display    = self.currency_info.get("display", ""),
+            revenue_cagr_hist   = hist_metrics.revenue_cagr,
+            ebitda_margin_avg   = hist_metrics.ebitda_margin_avg,
+            capex_intensity     = hist_metrics.capex_intensity_avg,
+            nwc_intensity       = hist_metrics.nwc_intensity_avg,
         )
-        return inputs, warnings, self.currency_info
+        return inputs, warnings
 
+
+# ─────────────────────────────────────────────
+# GENERIC EXCEL PARSER (fallback)
+# ─────────────────────────────────────────────
 
 class GenericExcelParser:
+    """Fallback for non-Moodys files. Single-year extraction."""
+
     def __init__(self):
-        self.df = None
-        self.currency_info = {}
-        self.company_name = "Target"
-        self.mapping = {}
-        self.unmapped = []
-        self.warnings = []
+        self.df:            Optional[pd.DataFrame] = None
+        self.currency_info: dict = {}
+        self.company_name:  str  = "Target"
+        self.mapping:       dict = {}
+        self.unmapped:      list = []
+        self.warnings:      list = []
 
     def load(self, file) -> bool:
         try:
@@ -360,9 +451,8 @@ class GenericExcelParser:
             self.currency_info = detect_currency_and_unit("EUR")
             return
         for col in self.df.columns:
-            s = str(col).lower()
-            if any(x in s for x in ["usd", "eur", "tsd", "mio"]):
-                self.currency_info = detect_currency_and_unit(col)
+            if any(x in str(col).lower() for x in ["usd", "eur", "tsd", "mio"]):
+                self.currency_info = detect_currency_and_unit(str(col))
                 return
         self.currency_info = detect_currency_and_unit("EUR")
 
@@ -384,53 +474,64 @@ class GenericExcelParser:
                 mapped[field] = found
             else:
                 unmapped.append(field)
-        self.mapping = mapped
+        self.mapping  = mapped
         self.unmapped = unmapped
         return {"mapped": mapped, "unmapped": unmapped, "available_columns": available}
 
     def build_company_inputs(self, manual_overrides={}) -> tuple:
-        vals = manual_overrides
+        vals     = {**self._extract_latest(), **manual_overrides}
         warnings = list(self.warnings)
+
         def get(f, d=0.0):
             v = vals.get(f)
             if v is None:
                 warnings.append(f"⚠️ '{f}' fehlt")
                 return d
             return v
+
         ebitda = get("ebitda")
-        dep = get("depreciation")
-        tax = get("tax_rate", 0.25)
+        dep    = get("depreciation")
+        tax    = get("tax_rate", 0.25)
         if tax > 1:
             tax /= 100.0
+
         inputs = CompanyInputs(
-            revenue=get("revenue"), ebitda=ebitda,
-            ebit=vals.get("ebit") or (ebitda - dep),
-            depreciation=dep, interest_expense=get("interest_expense"),
-            tax_rate=tax, total_debt=get("total_debt"), cash=get("cash"),
-            net_working_capital=get("net_working_capital"), capex=get("capex"),
-            company_name=self.company_name,
+            revenue             = get("revenue"),
+            ebitda              = ebitda,
+            ebit                = vals.get("ebit") or (ebitda - dep),
+            depreciation        = dep,
+            interest_expense    = get("interest_expense"),
+            tax_rate            = tax,
+            total_debt          = get("total_debt"),
+            cash                = get("cash"),
+            net_working_capital = get("net_working_capital"),
+            capex               = get("capex") or dep * 0.75,
+            company_name        = self.company_name,
+            currency_display    = self.currency_info.get("display", ""),
         )
         return inputs, warnings, self.currency_info
 
+    def _extract_latest(self) -> dict:
+        if self.df is None or not self.mapping:
+            return {}
+        vals = {}
+        for field, col in self.mapping.items():
+            if col in self.df.columns:
+                series = pd.to_numeric(self.df[col], errors="coerce").dropna()
+                if not series.empty:
+                    vals[field] = float(series.iloc[-1])
+        return vals
+
+
+# ─────────────────────────────────────────────
+# UNIFIED ENTRY POINT
+# ─────────────────────────────────────────────
 
 def parse_file(file) -> tuple:
+    """Auto-detects format. Returns (parser, is_moodys: bool)"""
     moodys = MoodysOrbisParser()
     if moodys.load(file):
         return moodys, True
     generic = GenericExcelParser()
     generic.load(file)
     return generic, False
-
-
-def generate_sample_excel(path: str = "data/sample/sample_company.xlsx"):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    data = {
-        "Kennzahl": ["∟ Umsatz", "∟ EBITDA", "∟ Betriebsgewinn/-verlust [=EBIT]",
-                     "∟ Wertminderungen & Abschreibungen", "∟ Zinsaufwand",
-                     "∟ Steuern", "Langfristige Finanzschulden",
-                     "Zahlungsmittel & Zahlungsmitteläquivalente", "Working Capital", "CapEx"],
-        "2022 (tsd EUR)": [48500, 11900, 8900, 3000, 1500, 3100, 20000, 4500, 6800, 2500],
-        "2024 (tsd EUR)": [56800, 13900, 10200, 3700, 1300, 3600, 17500, 6100, 7600, 2800],
-    }
-    pd.DataFrame(data).to_excel(path, index=False)
-    return path

@@ -11,13 +11,10 @@ import plotly.express as px
 from io import BytesIO
 import sys, os
 
-# Robust path fix: works locally (VS Code), on Streamlit Cloud, and in any CWD
-_ROOT = os.path.dirname(os.path.abspath(__file__))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.dirname(__file__))
 
-from engine.finance_engine import CompanyInputs, LBOAssumptions, LBOEngine, SensitivityEngine
-from utils.data_parser import FinancialDataParser, REQUIRED_FIELDS, generate_sample_excel
+from finance_engine import CompanyInputs, LBOAssumptions, LBOEngine, SensitivityEngine
+from data_parser import FinancialDataParser, REQUIRED_FIELDS, generate_sample_excel
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG

@@ -1,286 +1,436 @@
 """
-Data Parser – Excel (Bilanz/GuV) & Moodys/Nortdata Format
-Handles column mapping, normalization, and validation
+Data Parser v2 – Moodys Orbis Excel Format + Generic Excel
 """
 
 import pandas as pd
 import numpy as np
 import sys, os
+from datetime import date
 from typing import Optional
 
-# Ensure project root is on path (needed when imported from Streamlit Cloud)
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from finance_engine import CompanyInputs
 
-
-# ─────────────────────────────────────────────
-# FIELD MAPPINGS
-# ─────────────────────────────────────────────
-
-# Standard internal field names → display labels
 REQUIRED_FIELDS = {
-    "revenue":          "Umsatz / Revenue (€M)",
-    "ebitda":           "EBITDA (€M)",
-    "ebit":             "EBIT (€M)",
-    "depreciation":     "D&A (€M)",
-    "interest_expense": "Zinsaufwand / Interest Expense (€M)",
-    "tax_rate":         "Steuerquote / Tax Rate (0–1)",
-    "total_debt":       "Gesamtschulden / Total Debt (€M)",
-    "cash":             "Kasse / Cash (€M)",
-    "net_working_capital": "Net Working Capital (€M)",
-    "capex":            "Investitionen / CapEx (€M)",
+    "revenue":              "Umsatz / Revenue",
+    "ebitda":               "EBITDA",
+    "ebit":                 "EBIT",
+    "depreciation":         "D&A / Abschreibungen",
+    "interest_expense":     "Zinsaufwand / Interest Expense",
+    "tax_rate":             "Steuerquote / Tax Rate (0–1)",
+    "total_debt":           "Gesamtschulden / Total Debt",
+    "cash":                 "Cash / Zahlungsmittel",
+    "net_working_capital":  "Net Working Capital",
+    "capex":                "CapEx / Investitionen",
 }
 
-# Moodys / Nortdata typical column name variants
-MOODYS_ALIASES = {
-    "revenue":          ["Net Sales", "Revenue", "Umsatz", "Gesamtumsatz", "Total Revenue", "Sales"],
-    "ebitda":           ["EBITDA", "Ebitda", "Operating EBITDA", "Reported EBITDA"],
-    "ebit":             ["EBIT", "Ebit", "Operating Income", "Operating Profit"],
-    "depreciation":     ["D&A", "Depreciation", "Depreciation & Amortization", "Abschreibungen"],
-    "interest_expense": ["Interest Expense", "Zinsaufwand", "Net Interest Expense", "Finance Costs"],
-    "tax_rate":         ["Tax Rate", "Effective Tax Rate", "Steuerquote"],
-    "total_debt":       ["Total Debt", "Gesamtschulden", "Financial Debt", "Gross Debt"],
-    "cash":             ["Cash", "Cash & Equivalents", "Kasse", "Liquide Mittel"],
-    "net_working_capital": ["Net Working Capital", "NWC", "Working Capital"],
-    "capex":            ["CapEx", "Capex", "Capital Expenditures", "Investitionen", "CAPEX"],
+ROW_ALIASES = {
+    "revenue": [
+        "umsatz", "betriebsertrag (umsatz)", "umsatzerlöse",
+        "net sales", "revenue", "total revenue", "net revenue", "sales", "operating revenue",
+    ],
+    "ebitda": [
+        "ebitda", "ebitda spanne",
+        "earnings before interest taxes depreciation amortization",
+    ],
+    "ebit": [
+        "betriebsgewinn/-verlust [=ebit]", "ebit", "operating profit",
+        "operating income", "operating result", "betriebsergebnis",
+    ],
+    "depreciation": [
+        "wertminderungen & abschreibungen", "abschreibungen", "afa", "d&a",
+        "depreciation", "depreciation & amortization", "amortization",
+    ],
+    "interest_expense": [
+        "zinsaufwand", "finanzaufwendungen", "interest expense",
+        "finance costs", "net interest expense", "zinsen", "financial expense",
+    ],
+    "tax_rate": [
+        "∟ steuern",
+        "tax expense", "income taxes", "steueraufwand",
+    ],
+    "pretax_profit": [
+        "gewinn/verlust vor steuern",
+        "∟ gewinn/verlust vor steuern",
+        "profit before tax",
+        "income before tax",
+        "ebt",
+    ],
+    "total_debt": [
+        "langfristige finanzschulden", "∟ langfristige finanzschulden",
+        "kurzfristige finanzschulden", "∟ kurzfristige finanzschulden",
+        "vergebene kredite", "∟ vergebene kredite",
+        "total debt", "financial debt", "gross debt",
+        "gesamtschulden", "bankverbindlichkeiten",
+    ],
+    "cash": [
+        "zahlungsmittel & zahlungsmitteläquivalente",
+        "cash", "cash & equivalents", "kasse", "kassenbestand", "flüssige mittel",
+    ],
+    "net_working_capital": [
+        "∟ working capital",
+        "working capital",
+        "net working capital",
+        "nwc",
+    ],
+    "capex": [
+        "capex",
+        "capital expenditure",
+        "capital expenditures",
+        "sachanlagen-zugänge",
+        "zugänge sachanlagen",
+        "anlagezugänge",
+        "additions to property",
+        "additions to fixed assets",
+        "investitionen in sachanlagen",
+        "purchase of property",
+    ],
 }
 
-# Generic Excel aliases (user-uploaded Bilanz/GuV)
-EXCEL_ALIASES = {
-    "revenue":          ["Umsatz", "Umsatzerlöse", "Revenue", "Net Revenue", "Sales"],
-    "ebitda":           ["EBITDA", "Betriebsergebnis vor Abschreibungen"],
-    "ebit":             ["EBIT", "Betriebsergebnis", "Operating Result"],
-    "depreciation":     ["AfA", "Abschreibungen", "D&A", "Depreciation"],
-    "interest_expense": ["Zinsaufwand", "Zinsen", "Interest", "Finanzaufwand"],
-    "tax_rate":         ["Steuersatz", "Tax Rate", "Ertragsteuerquote"],
-    "total_debt":       ["Verbindlichkeiten ggü. KI", "Bankverbindlichkeiten", "Financial Debt", "Total Debt"],
-    "cash":             ["Kasse", "Kassenbestand", "Flüssige Mittel", "Cash"],
-    "net_working_capital": ["NWC", "Working Capital", "Umlaufvermögen (netto)"],
-    "capex":            ["Investitionen", "CapEx", "Sachanlagen-Zugänge", "Capital Expenditure"],
+MOODYS_SHEET_PRIORITY = {
+    "revenue":          ["GuV-Rechnung", "P&L", "Income Statement"],
+    "ebitda":           ["GuV-Rechnung", "P&L", "Income Statement"],
+    "ebit":             ["GuV-Rechnung", "P&L", "Income Statement"],
+    "depreciation":     ["GuV-Rechnung", "P&L", "Income Statement"],
+    "interest_expense": ["GuV-Rechnung", "P&L", "Income Statement"],
+    "tax_rate":         ["GuV-Rechnung", "P&L", "Income Statement"],
+    "pretax_profit":    ["GuV-Rechnung", "P&L", "Income Statement"],
+    "total_debt":       ["Bilanz", "Balance Sheet"],
+    "cash":             ["Bilanz", "Balance Sheet"],
+    "net_working_capital": ["Bilanz", "Balance Sheet"],
+    "capex":            ["GuV-Rechnung", "P&L", "Bilanz", "Balance Sheet"],
 }
 
-ALL_ALIASES = {k: list(set(MOODYS_ALIASES[k] + EXCEL_ALIASES[k])) for k in REQUIRED_FIELDS}
+
+def detect_currency_and_unit(unit_string: str) -> dict:
+    s = str(unit_string).lower().strip()
+    currency = "USD" if "usd" in s else "EUR" if "eur" in s else "?"
+    if any(x in s for x in ["tsd", "tausend", "thousand"]):
+        unit_label, scale_to_millions, raw_unit = "Tausend", 0.001, "tsd"
+    elif any(x in s for x in ["mio", "million"]):
+        unit_label, scale_to_millions, raw_unit = "Millionen", 1.0, "mio"
+    elif any(x in s for x in ["mrd", "milliard", "billion"]):
+        unit_label, scale_to_millions, raw_unit = "Milliarden", 1000.0, "mrd"
+    else:
+        unit_label, scale_to_millions, raw_unit = "Einzelwert", 0.000001, "units"
+    return {
+        "currency": currency,
+        "unit_label": unit_label,
+        "raw_unit": raw_unit,
+        "scale_to_millions": scale_to_millions,
+        "display": f"{currency} ({unit_label})",
+        "symbol": "€" if currency == "EUR" else "$" if currency == "USD" else "",
+    }
 
 
-# ─────────────────────────────────────────────
-# PARSER CLASS
-# ─────────────────────────────────────────────
+def excel_serial_to_year(serial) -> Optional[int]:
+    try:
+        s = int(float(str(serial)))
+        if 40000 < s < 50000:
+            import datetime
+            d = date(1899, 12, 30) + datetime.timedelta(days=s)
+            return d.year
+        if 2000 <= s <= 2035:
+            return s
+    except Exception:
+        pass
+    return None
 
-class FinancialDataParser:
 
+class MoodysOrbisParser:
     def __init__(self):
-        self.raw_df: Optional[pd.DataFrame] = None
-        self.detected_format: str = "unknown"
-        self.mapping: dict = {}          # internal_field → detected column
-        self.unmapped: list = []         # fields that need manual mapping
+        self.sheets: dict = {}
+        self.company_name: str = "Unknown"
+        self.currency_info: dict = {}
+        self.years: list = []
+        self.raw_data: dict = {}
         self.warnings: list = []
+        self.is_moodys_format: bool = False
 
-    # ── File Loading ───────────────────────────
+    def load(self, file) -> bool:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(file, data_only=True, read_only=True)
+            self.sheets = {sname: list(wb[sname].iter_rows(values_only=True)) for sname in wb.sheetnames}
+        except Exception as e:
+            self.warnings.append(f"Ladefehler: {e}")
+            return False
 
-    def load_excel(self, file) -> pd.DataFrame:
-        """Load Excel file, try multiple sheet strategies"""
-        xl = pd.ExcelFile(file)
-        sheet_names = xl.sheet_names
+        moodys_keys = {"Bilanz", "GuV-Rechnung", "Kennzahlen", "Cover", "Balance Sheet", "P&L", "Income Statement"}
+        self.is_moodys_format = len(moodys_keys & set(self.sheets.keys())) >= 2
+        if not self.is_moodys_format:
+            return False
 
-        # Prefer sheets with financial keywords
-        preferred = [s for s in sheet_names if any(
-            kw in s.lower() for kw in ["guv", "p&l", "income", "bilanz", "balance", "financials", "summary"]
-        )]
-        sheet = preferred[0] if preferred else sheet_names[0]
+        self._extract_company_name()
+        self._extract_years_and_currency()
+        self._extract_all_fields()
+        return True
 
-        df = pd.read_excel(file, sheet_name=sheet, header=None)
-        df = self._detect_header_row(df)
-        self.raw_df = df
-        self.detected_format = "excel"
-        return df
+    def _extract_company_name(self):
+        for sheet_key in ["Cover"] + list(self.sheets.keys()):
+            if sheet_key in self.sheets:
+                for row in self.sheets[sheet_key][:3]:
+                    val = row[0] if row else None
+                    if val and isinstance(val, str) and len(val.strip()) > 3:
+                        self.company_name = val.strip()
+                        return
 
-    def load_moodys_csv(self, file) -> pd.DataFrame:
-        """Load Moodys/Nortdata CSV export"""
-        # Try different encodings common in German financial exports
-        for enc in ["utf-8", "latin-1", "cp1252"]:
-            try:
-                df = pd.read_csv(file, encoding=enc, sep=None, engine="python")
-                break
-            except Exception:
+    def _extract_years_and_currency(self):
+        for sheet_name, rows in self.sheets.items():
+            if sheet_name == "Cover" or len(rows) < 7:
                 continue
+            date_row = rows[4] if len(rows) > 4 else []
+            unit_row = rows[5] if len(rows) > 5 else []
+            years = [yr for cell in date_row[1:] if (yr := excel_serial_to_year(cell))]
+            if years:
+                self.years = years
+            for cell in unit_row[1:]:
+                if cell and str(cell).strip():
+                    self.currency_info = detect_currency_and_unit(str(cell))
+                    return
+        if not self.currency_info:
+            self.currency_info = detect_currency_and_unit("EUR")
+            self.warnings.append("⚠️ Währung nicht erkannt – EUR als Default")
 
-        df.columns = [str(c).strip() for c in df.columns]
-        self.raw_df = df
-        self.detected_format = "moodys_csv"
-        return df
+    def _extract_all_fields(self):
+        for field, sheet_priority in MOODYS_SHEET_PRIORITY.items():
+            found = False
+            for sheet_name in sheet_priority:
+                if sheet_name in self.sheets:
+                    result = self._find_field_in_sheet(field, self.sheets[sheet_name])
+                    if result is not None:
+                        self.raw_data[field] = result
+                        found = True
+                        break
+            if not found:
+                for sheet_name, rows in self.sheets.items():
+                    if sheet_name == "Cover":
+                        continue
+                    result = self._find_field_in_sheet(field, rows)
+                    if result is not None:
+                        self.raw_data[field] = result
+                        found = True
+                        break
+            if not found:
+                self.warnings.append(f"⚠️ '{field}' nicht gefunden")
 
-    # ── Header Detection ───────────────────────
+    def _find_field_in_sheet(self, field: str, rows: list) -> Optional[dict]:
+        aliases = ROW_ALIASES.get(field, [])
+        for row in rows:
+            if not row or row[0] is None:
+                continue
+            label_clean = str(row[0]).strip().lower().lstrip(" \t\xa0∟").strip()
+            for alias in aliases:
+                if label_clean == alias or label_clean.endswith(" " + alias):
+                    values = list(row[1:])
+                    result = {}
+                    for i, yr in enumerate(self.years):
+                        if i < len(values):
+                            v = self._safe_float(values[i])
+                            if v is not None:
+                                result[yr] = v
+                    if result:
+                        return result
+        return None
 
-    def _detect_header_row(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Find the row that contains column headers (not always row 0)"""
+    def _safe_float(self, val) -> Optional[float]:
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return None if val != val else float(val)
+        s = str(val).strip().lower()
+        if s in ("n.v.", "n.s.", "n/a", "", "-", "—"):
+            return None
+        try:
+            return float(s.replace(".", "").replace(",", "."))
+        except Exception:
+            return None
+
+    def get_latest_year_values(self) -> dict:
+        if not self.years:
+            return {}
+        latest = self.years[0]
+        result = {}
+        for field, year_data in self.raw_data.items():
+            if latest in year_data:
+                result[field] = year_data[latest]
+            elif year_data:
+                result[field] = year_data[sorted(year_data.keys(), reverse=True)[0]]
+        return result
+
+    def get_timeseries(self) -> pd.DataFrame:
+        if not self.years:
+            return pd.DataFrame()
+        data = {}
+        for field, year_data in self.raw_data.items():
+            data[field] = {yr: year_data.get(yr) for yr in self.years}
+        return pd.DataFrame(data, index=self.years).sort_index(ascending=False)
+
+    def build_company_inputs(self, manual_overrides={}, use_year=None) -> tuple:
+        if use_year:
+            vals = {f: self.raw_data[f].get(use_year) for f in self.raw_data
+                    if use_year in self.raw_data.get(f, {})}
+        else:
+            vals = self.get_latest_year_values()
+        vals.update(manual_overrides)
+        warnings = list(self.warnings)
+
+        def get(f, d=0.0):
+            v = vals.get(f)
+            if v is None:
+                warnings.append(f"⚠️ '{f}' fehlt – Default verwendet")
+                return d
+            return v
+
+        ebitda = get("ebitda")
+        dep = get("depreciation")
+
+        # Derive tax rate: steuern / gewinn_vor_steuern
+        tax_expense = vals.get("tax_rate")       # actually tax expense (from "Steuern" row)
+        pretax      = vals.get("pretax_profit")  # "Gewinn/Verlust vor Steuern"
+        if tax_expense and pretax and pretax > 0 and tax_expense < pretax:
+            tax_rate = tax_expense / pretax
+        elif tax_expense and pretax and pretax > 0:
+            tax_rate = 0.25
+            warnings.append(f"⚠️ Steuersatz-Ableitung unplausibel ({tax_expense:.0f}/{pretax:.0f}) – 25% Default")
+        else:
+            tax_rate = 0.25
+            warnings.append("⚠️ Steuersatz nicht ableitbar – 25% Default")
+
+        # CapEx fallback: Moodys Orbis rarely has explicit CapEx
+        # Use D&A as maintenance CapEx proxy if CapEx == 0 (conservative)
+        capex_val = vals.get("capex")
+        if not capex_val or capex_val == 0:
+            capex_val = dep * 0.75  # maintenance CapEx ~ 75% of D&A
+            warnings.append("ℹ️ CapEx nicht gefunden – 75% der D&A als Maintenance-CapEx angesetzt")
+
+        # Total debt: sum long-term + short-term if both available
+        debt_val = get("total_debt")
+        # If debt = 0 but we have both lt and st entries, it means the company is debt-free
+        # This is valid for Glock
+
+        inputs = CompanyInputs(
+            revenue=get("revenue"), ebitda=ebitda,
+            ebit=vals.get("ebit") or (ebitda - dep),
+            depreciation=dep, interest_expense=get("interest_expense"),
+            tax_rate=tax_rate, total_debt=debt_val,
+            cash=get("cash"), net_working_capital=get("net_working_capital"),
+            capex=capex_val, company_name=self.company_name,
+        )
+        return inputs, warnings, self.currency_info
+
+
+class GenericExcelParser:
+    def __init__(self):
+        self.df = None
+        self.currency_info = {}
+        self.company_name = "Target"
+        self.mapping = {}
+        self.unmapped = []
+        self.warnings = []
+
+    def load(self, file) -> bool:
+        try:
+            xl = pd.ExcelFile(file, engine="openpyxl")
+            preferred = [s for s in xl.sheet_names if any(
+                kw in s.lower() for kw in ["guv", "p&l", "income", "bilanz", "balance"])]
+            sheet = preferred[0] if preferred else xl.sheet_names[0]
+            df = pd.read_excel(file, sheet_name=sheet, header=None, engine="openpyxl")
+            self.df = self._set_header(df)
+            self._detect_currency()
+            return True
+        except Exception as e:
+            self.warnings.append(f"Fehler: {e}")
+            return False
+
+    def _set_header(self, df):
         for i, row in df.iterrows():
-            values = [str(v).lower() for v in row if pd.notna(v)]
-            if any(kw in " ".join(values) for kw in ["umsatz", "revenue", "ebitda", "sales"]):
+            vals = [str(v).lower() for v in row if pd.notna(v)]
+            if any(kw in " ".join(vals) for kw in ["umsatz", "revenue", "ebitda"]):
                 df.columns = df.iloc[i]
-                df = df.iloc[i+1:].reset_index(drop=True)
-                df.columns = [str(c).strip() for c in df.columns]
-                return df
-        # Fallback: assume first row
+                return df.iloc[i+1:].reset_index(drop=True)
         df.columns = df.iloc[0]
-        df = df.iloc[1:].reset_index(drop=True)
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
+        return df.iloc[1:].reset_index(drop=True)
 
-    # ── Auto-Mapping ───────────────────────────
+    def _detect_currency(self):
+        if self.df is None:
+            self.currency_info = detect_currency_and_unit("EUR")
+            return
+        for col in self.df.columns:
+            s = str(col).lower()
+            if any(x in s for x in ["usd", "eur", "tsd", "mio"]):
+                self.currency_info = detect_currency_and_unit(col)
+                return
+        self.currency_info = detect_currency_and_unit("EUR")
 
-    def auto_map_columns(self) -> dict:
-        """Try to auto-map raw columns to internal field names"""
-        if self.raw_df is None:
-            raise ValueError("No data loaded yet")
-
-        available_cols = list(self.raw_df.columns)
-        aliases = ALL_ALIASES
-
-        mapped = {}
-        unmapped = []
-
-        for field, alias_list in aliases.items():
+    def auto_map(self) -> dict:
+        if self.df is None:
+            return {"mapped": {}, "unmapped": list(REQUIRED_FIELDS.keys()), "available_columns": []}
+        available = list(self.df.columns)
+        mapped, unmapped = {}, []
+        for field, aliases in ROW_ALIASES.items():
             found = None
-            for alias in alias_list:
-                # Exact match
-                if alias in available_cols:
-                    found = alias
-                    break
-                # Case-insensitive
-                for col in available_cols:
-                    if alias.lower() == col.lower():
+            for alias in aliases:
+                for col in available:
+                    if alias in str(col).lower():
                         found = col
                         break
                 if found:
                     break
-
             if found:
                 mapped[field] = found
             else:
                 unmapped.append(field)
-
         self.mapping = mapped
         self.unmapped = unmapped
-        return {"mapped": mapped, "unmapped": unmapped, "available_columns": available_cols}
+        return {"mapped": mapped, "unmapped": unmapped, "available_columns": available}
 
-    # ── Value Extraction ───────────────────────
-
-    def extract_latest_year(self) -> dict:
-        """
-        Extract most recent year's values.
-        For wide-format (years as columns): takes rightmost numeric column.
-        For long-format (rows = line items): aggregates by row label.
-        """
-        df = self.raw_df
-        values = {}
-
-        # Detect if wide format (multiple year columns)
-        year_cols = [c for c in df.columns if str(c).strip().isdigit() and 2015 <= int(str(c).strip()) <= 2030]
-
-        if year_cols:
-            latest_year_col = sorted(year_cols)[-1]
-            for field, col_name in self.mapping.items():
-                try:
-                    mask = df.iloc[:, 0].astype(str).str.lower().str.contains(col_name.lower(), na=False)
-                    val = df.loc[mask, latest_year_col].values
-                    if len(val) > 0:
-                        values[field] = self._parse_number(val[0])
-                except Exception:
-                    pass
-        else:
-            # Assume long format: row = year, col = metric
-            try:
-                last_row = df.dropna(how="all").iloc[-1]
-                for field, col_name in self.mapping.items():
-                    if col_name in df.columns:
-                        values[field] = self._parse_number(last_row.get(col_name, 0))
-            except Exception:
-                pass
-
-        return values
-
-    def _parse_number(self, val) -> float:
-        """Robust number parsing (handles German formats, thousands separators)"""
-        if isinstance(val, (int, float)) and not np.isnan(val):
-            return float(val)
-        s = str(val).strip().replace(" ", "").replace(".", "").replace(",", ".")
-        s = s.replace("€", "").replace("T€", "").replace("k", "000")
-        try:
-            return float(s)
-        except Exception:
-            return 0.0
-
-    # ── Build CompanyInputs ────────────────────
-
-    def build_company_inputs(
-        self,
-        extracted_values: dict,
-        manual_overrides: dict = {},
-        company_name: str = "Target",
-        scale_factor: float = 1.0,   # e.g. if values are in €k → divide by 1000
-    ) -> tuple[CompanyInputs, list]:
-        """
-        Build CompanyInputs from extracted + manually provided values.
-        Returns (CompanyInputs, list_of_warnings)
-        """
-        vals = {**extracted_values, **manual_overrides}
-        warnings = []
-
-        def get(field, default=0.0):
-            v = vals.get(field, default)
-            if v == 0.0:
-                warnings.append(f"⚠️ '{field}' not found – using 0. Please verify.")
-            return v * scale_factor if field != "tax_rate" else v
-
-        # Derive EBIT if missing
+    def build_company_inputs(self, manual_overrides={}) -> tuple:
+        vals = manual_overrides
+        warnings = list(self.warnings)
+        def get(f, d=0.0):
+            v = vals.get(f)
+            if v is None:
+                warnings.append(f"⚠️ '{f}' fehlt")
+                return d
+            return v
         ebitda = get("ebitda")
-        dep    = get("depreciation")
-        ebit   = vals.get("ebit", ebitda - dep) * scale_factor
-
-        # Derive tax rate if given as percentage
-        tax_rate = get("tax_rate", 0.25)
-        if tax_rate > 1:
-            tax_rate /= 100.0
-            warnings.append("Tax rate was > 1 – converted from % to decimal.")
-
+        dep = get("depreciation")
+        tax = get("tax_rate", 0.25)
+        if tax > 1:
+            tax /= 100.0
         inputs = CompanyInputs(
-            revenue=get("revenue"),
-            ebitda=ebitda,
-            ebit=ebit,
-            depreciation=dep,
-            interest_expense=get("interest_expense"),
-            tax_rate=tax_rate,
-            total_debt=get("total_debt"),
-            cash=get("cash"),
-            net_working_capital=get("net_working_capital"),
-            capex=get("capex"),
-            company_name=company_name,
+            revenue=get("revenue"), ebitda=ebitda,
+            ebit=vals.get("ebit") or (ebitda - dep),
+            depreciation=dep, interest_expense=get("interest_expense"),
+            tax_rate=tax, total_debt=get("total_debt"), cash=get("cash"),
+            net_working_capital=get("net_working_capital"), capex=get("capex"),
+            company_name=self.company_name,
         )
+        return inputs, warnings, self.currency_info
 
-        return inputs, warnings
 
+def parse_file(file) -> tuple:
+    moodys = MoodysOrbisParser()
+    if moodys.load(file):
+        return moodys, True
+    generic = GenericExcelParser()
+    generic.load(file)
+    return generic, False
 
-# ─────────────────────────────────────────────
-# SAMPLE DATA GENERATOR (for demo / testing)
-# ─────────────────────────────────────────────
 
 def generate_sample_excel(path: str = "data/sample/sample_company.xlsx"):
-    """Generate a sample Excel file mimicking a German Bilanz/GuV export"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     data = {
-        "Kennzahl": [
-            "Umsatz", "EBITDA", "EBIT", "Abschreibungen",
-            "Zinsaufwand", "Steuersatz",
-            "Bankverbindlichkeiten", "Kassenbestand",
-            "Net Working Capital", "Investitionen"
-        ],
-        "2022": [48.5, 9.2, 6.8, 2.4, 1.1, 0.28, 22.0, 3.5, 6.0, 2.1],
-        "2023": [52.1, 10.4, 7.7, 2.7, 1.3, 0.27, 21.0, 4.0, 6.3, 2.3],
-        "2024": [56.8, 11.9, 8.9, 3.0, 1.5, 0.26, 20.0, 4.5, 6.8, 2.5],
+        "Kennzahl": ["∟ Umsatz", "∟ EBITDA", "∟ Betriebsgewinn/-verlust [=EBIT]",
+                     "∟ Wertminderungen & Abschreibungen", "∟ Zinsaufwand",
+                     "∟ Steuern", "Langfristige Finanzschulden",
+                     "Zahlungsmittel & Zahlungsmitteläquivalente", "Working Capital", "CapEx"],
+        "2022 (tsd EUR)": [48500, 11900, 8900, 3000, 1500, 3100, 20000, 4500, 6800, 2500],
+        "2024 (tsd EUR)": [56800, 13900, 10200, 3700, 1300, 3600, 17500, 6100, 7600, 2800],
     }
-    df = pd.DataFrame(data)
-    df.to_excel(path, index=False)
-    print(f"Sample file saved to {path}")
+    pd.DataFrame(data).to_excel(path, index=False)
     return path

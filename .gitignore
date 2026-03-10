@@ -1,0 +1,31 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Data (optional – entfernen wenn Samples im Repo sein sollen)
+data/sample/*.xlsx
+data/sample/*.csv
+
+# Build
+dist/
+build/
+*.egg-info/

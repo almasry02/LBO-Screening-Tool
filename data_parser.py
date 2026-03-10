@@ -5,7 +5,14 @@ Handles column mapping, normalization, and validation
 
 import pandas as pd
 import numpy as np
+import sys, os
 from typing import Optional
+
+# Ensure project root is on path (needed when imported from Streamlit Cloud)
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 from engine.finance_engine import CompanyInputs
 
 

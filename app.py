@@ -1,5 +1,5 @@
 """
-LBO Screening Tool v4.1
+Buyout Target Screening Tool v4.1
 [R&P] Rosenbaum & Pearl - Investment Banking (2020)
 [MPE] Mastering Private Equity / Private Equity at Work
 [McK] McKinsey - Valuation (7th ed.)
@@ -225,7 +225,7 @@ def _a_args(a):
 # PAGE CONFIG
 # ══════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="LBO Screening Tool",
+    page_title="Target Screening Tool",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -278,9 +278,9 @@ DEFAULT_F = {
 # ── LANGUAGE STRINGS ───────────────────────────────────
 LANG = {
     "en": {
-        "nav_main":"LBO Analysis","nav_settings":"Settings",
+        "nav_main":"Buyout Analysis","nav_settings":"Settings",
         "data_input":"Data Input","deal_params":"Deal Parameters",
-        "upload_btn":"Run LBO Analysis",
+        "upload_btn":"Run Analysis",
         "demo_info":"Demo: Anonymized mid-market manufacturing company | tsd USD | 10-year normalized basis [R&P]",
         "lang_label":"Language","tab_hist":"Historical Analytics",
         "tab_lbo":"LBO Structure","tab_debt":"Debt Schedule",
@@ -356,9 +356,9 @@ LANG = {
         "thesis_run":"Generate Memo","thesis_loading":"Generating investment theses...",
     },
     "de": {
-        "nav_main":"LBO Analyse","nav_settings":"Einstellungen",
+        "nav_main":"Buyout Analyse","nav_settings":"Einstellungen",
         "data_input":"Dateneingabe","deal_params":"Deal-Parameter",
-        "upload_btn":"LBO-Analyse starten",
+        "upload_btn":"Analyse starten",
         "demo_info":"Demo: Anonymisiertes Mittelstands-Unternehmen | tsd USD | 10 Jahre normalisierte Basis [R&P]",
         "lang_label":"Sprache","tab_hist":"Historische Analyse",
         "tab_lbo":"LBO-Struktur","tab_debt":"Debt Schedule",
@@ -521,7 +521,7 @@ if in_settings:
 # MAIN PAGE — SIDEBAR
 # ══════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## LBO Screener")
+    st.markdown("## Target Screener")
     st.caption("v4.1 - PE Analyst Edition")
     st.markdown("---")
     lc = st.selectbox(L["lang_label"], ["English","Deutsch"],

@@ -1614,49 +1614,30 @@ with tab_screen:
         else:
             import re as _re
 
-            # ── DEBUG: always visible so truncation is immediately obvious
-            with st.expander("🔍 Debug — Raw API response", expanded=False):
-                # st.code has no length limit and shows the full repr
-                st.code(raw, language=None)
-
-            # ── Normalize: replace literal \n escapes with real newlines
+            # Normalize literal \n escapes, strip preamble before first bullet
             text = raw.replace("\\n", "\n").strip()
+            text = _re.sub(r'^.*?(?=\n\s*\*{0,2}\s*[1-3][\.\)])', '', text, count=1, flags=_re.DOTALL).strip()
 
-            # ── Strip preamble lines like "Here are 3 bullets:" before the first number
-            text = _re.sub(r'^.*?(?=\n\s*\d+[\.\)]|\n\s*\*\*\s*\d+[\.\)])', '', text,
-                           count=1, flags=_re.DOTALL).strip()
-            # If no preamble found the regex eats nothing — safe
-
-            # ── Ensure double newline before each numbered bullet (1. / 2. / 3.)
-            # so markdown renders them as separate paragraphs
-            text = _re.sub(r'\n(\s*\d+[\.\)]\s)', r'\n\n\1', text)
-
-            # ── Render with native st.markdown — Streamlit handles all formatting,
-            # line breaks, bold, lists. No wrapper div → no clipping ever.
             COLORS = ["#4f8ef7", "#00cc88", "#ffaa00"]
             LABELS = ["Operational Improvement", "Deleveraging", "Strategic / Exit"]
 
-            # Split into sections on numbered bullets
-            parts = _re.split(r'(?m)^(\s*\d+[\.\)]\s)', text)
-            # parts alternates: [pre, "1. ", content1, "2. ", content2, ...]
-
-            # Collect (bullet_number, content) pairs
-            sections = []
-            i = 0
-            while i < len(parts):
-                chunk = parts[i]
-                if _re.match(r'^\s*\d+[\.\)]\s$', chunk):
-                    content = parts[i + 1] if i + 1 < len(parts) else ""
-                    sections.append(content.strip())
-                    i += 2
-                else:
-                    i += 1
+            # ── Find the 3 bullets robustly via findall with DOTALL
+            # Matches "1." / "1.  " / "**1.**" anywhere — newlines irrelevant
+            # Each section runs until the next numbered bullet or end of string
+            pattern = r'(?:\*{0,2}\s*([1-3])[\.\)]\*{0,2})(?!\d)\s+(.*?)(?=\*{0,2}\s*[1-3][\.\)]\*{0,2}(?!\d)\s|$)'
+            matches = _re.findall(pattern, text, flags=_re.DOTALL)
+            # Keep only the first occurrence of each bullet number
+            seen = {}
+            for num, content in matches:
+                if num not in seen:
+                    seen[num] = content.strip()
+            sections = [seen.get(str(n), "") for n in range(1, 4)]
+            sections = [s for s in sections if s]
 
             if len(sections) >= 2:
                 for idx, content in enumerate(sections[:3]):
                     color = COLORS[idx]
                     label = LABELS[idx] if idx < len(LABELS) else f"Point {idx+1}"
-                    # Colored header via HTML (label only, no content)
                     st.markdown(
                         f'<div style="border-left:4px solid {color};'
                         f'padding:4px 0 4px 12px;margin:20px 0 4px 0">'
@@ -1664,10 +1645,9 @@ with tab_screen:
                         f'{idx+1}. {label}</span></div>',
                         unsafe_allow_html=True
                     )
-                    # Content: strip leading bold title (Gemini repeats it after the number)
+                    # Strip any bold title Gemini prepends to the content
                     body = _re.sub(r'^\*\*[^\n*]{2,80}\*\*:?\s*\n?', '', content).strip()
                     body = _re.sub(r'^[^\n*]{2,80}\*\*:?\s*\n', '', body).strip()
-                    # Plain native markdown — full text, correct contrast, never clips
                     st.markdown(body if body else content)
             else:
                 # Fallback: render everything as-is

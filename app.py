@@ -352,8 +352,8 @@ LANG = {
         "screen_hold":"Hold (yrs)","screen_rate":"Rate (%)","screen_cagr":"CAGR (%)",
         "screen_eq":"Equity (%)","screen_results":"Screening Results",
         "screen_rank":"Rank","screen_empty":"Add at least 1 company to run the screener",
-        "thesis_title":"Investment Thesis Generator","thesis_industry":"Industry",
-        "thesis_run":"Generate Theses","thesis_loading":"Generating investment theses...",
+        "thesis_title":"Deal Screening Memo","thesis_industry":"Industry",
+        "thesis_run":"Generate Memo","thesis_loading":"Generating investment theses...",
     },
     "de": {
         "nav_main":"LBO Analyse","nav_settings":"Einstellungen",
@@ -430,8 +430,8 @@ LANG = {
         "screen_hold":"Haltedauer (J.)","screen_rate":"Zinssatz (%)","screen_cagr":"CAGR (%)",
         "screen_eq":"Eigenkapital (%)","screen_results":"Screening-Ergebnisse",
         "screen_rank":"Rang","screen_empty":"Mindestens 1 Unternehmen hinzufuegen",
-        "thesis_title":"Investment-Thesen Generator","thesis_industry":"Branche",
-        "thesis_run":"Thesen generieren","thesis_loading":"Thesen werden generiert...",
+        "thesis_title":"Deal Screening Memo","thesis_industry":"Branche",
+        "thesis_run":"Memo generieren","thesis_loading":"Thesen werden generiert...",
     }
 }
 
@@ -448,7 +448,7 @@ _ss_defaults = {
     "T": DEFAULT_T.copy(), "F": DEFAULT_F.copy(),
     "ccy": detect_currency_and_unit("EUR", lang="en"), "lang": "en",
     "screener_companies": [], "screener_results": [],
-    "thesis_text": "", "thesis_step": 0, "thesis_sections": {}, "uploaded_data": None,
+    "thesis_text": "", "thesis_step": 0, "thesis_sections": {}, "uploaded_data": None, "thesis_snapshot": None,
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -1499,7 +1499,7 @@ with tab_screen:
     with th2:
         thesis_ind = st.selectbox(L["thesis_industry"], list(BENCHMARKS.keys()), key="thesis_ind")
     with th1:
-        st.caption("AI-powered LBO screening memo — verdict, value creation drivers, key risks and investment conditions")
+        st.caption("AI-powered LBO screening memo — verdict, key risks and conditions for success")
 
     # ── Helper: build deal data block (shared across all prompts) ──────────
     def _deal_data_block():
@@ -1556,7 +1556,7 @@ with tab_screen:
     def _prompt_conditions(data):
         return (
             "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
-            "Write the WHAT MUST BE TRUE section for this LBO deal. Maximum 120 words.\n"
+            "Write the CONDITIONS FOR SUCCESS section for this LBO deal. Maximum 120 words.\n"
             "Write exactly 3 numbered conditions required to achieve target IRR. "
             "Format each as: [Metric] must [condition] to [outcome].\n"
             "Condition 1: minimum annual revenue growth rate to maintain IRR above target.\n"
@@ -1571,15 +1571,14 @@ with tab_screen:
         )
 
     import urllib.request as _ul_mod, urllib.error as _ue_mod, json as _uj_mod
-    import ssl as _ssl_mod
 
     # ── Groq API call (OpenAI-compatible endpoint) ─────────────────────────
     # Models in preference order — all free tier, no truncation issues
     _GROQ_MODELS = [
-        "meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 Scout
-        "llama-3.3-70b-versatile",                    # Llama 3.3 70b
-        "llama-3.1-8b-instant",                       # Llama 3.1 8b
-        "qwen/qwen3-32b",                             # Qwen3 32b
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "qwen/qwen3-32b",
     ]
 
     def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
@@ -1597,45 +1596,31 @@ with tab_screen:
                     "max_tokens": max_tok,
                     "temperature": 0.3,
                 }).encode("utf-8")
-
                 ctx = _ssl.create_default_context()
                 conn = _hc.HTTPSConnection("api.groq.com", timeout=45, context=ctx)
-                conn.request(
-                    "POST",
-                    "/openai/v1/chat/completions",
-                    body=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {key}",
-                        "User-Agent": "LBO-Screener/4.1",
-                        "Accept": "application/json",
-                        "Content-Length": str(len(body)),
-                    },
-                )
+                conn.request("POST", "/openai/v1/chat/completions", body=body, headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {key}",
+                    "User-Agent": "LBO-Screener/4.1",
+                    "Accept": "application/json",
+                    "Content-Length": str(len(body)),
+                })
                 resp = conn.getresponse()
                 raw = resp.read()
                 conn.close()
-
                 if resp.status == 200:
-                    data = _uj_mod.loads(raw)
-                    return data["choices"][0]["message"]["content"], model
-
-                # Non-200: parse error body immediately
+                    return _uj_mod.loads(raw)["choices"][0]["message"]["content"], model
                 try:
                     err_msg = _uj_mod.loads(raw).get("error", {}).get("message", raw.decode(errors="replace"))
                 except Exception:
                     err_msg = raw.decode(errors="replace")
-
                 model_errors.append((model, resp.status, err_msg))
                 if resp.status == 401:
                     raise RuntimeError(f"HTTP 401 – Ungültiger API-Key: {err_msg}")
-                # 403/404/429 → try next model
-
             except RuntimeError:
                 raise
             except Exception as e:
                 model_errors.append((model, "ERR", str(e)))
-
         lines = "\n".join(f"  {m}: HTTP {c} – {msg}" for m, c, msg in model_errors)
         raise RuntimeError(f"Kein Groq-Modell verfügbar. Details:\n{lines}")
 
@@ -1647,26 +1632,38 @@ with tab_screen:
             st.session_state.thesis_sections[f"_model_{step_name}"] = model_used
             return True
         except Exception as e:
-            # _groq_call_with_fallback already reads + formats all HTTP error details
             st.session_state.thesis_sections[step_name] = f"⚠️ {e}"
             return False
 
     # ── Run button: triggers step 1 ────────────────────────────────────────
-    col_btn1, col_btn2 = st.columns([1, 4])
-    with col_btn1:
+    # ── Snapshot of current deal params ────────────────────────
+    _current_snapshot = (
+        company_inputs.company_name,
+        round(company_inputs.revenue),
+        round(company_inputs.ebitda),
+        round(entry_multiple, 2),
+        round(exit_multiple, 2),
+        round(equity_pct, 3),
+        round(debt_rate, 4),
+        hold_period,
+        round(margin_exit, 3),
+    )
+    _memo_done = (
+        st.session_state.thesis_step == 4
+        and st.session_state.thesis_snapshot == _current_snapshot
+    )
+
+    # ── Run button: only show when no memo exists for current params ──
+    if not _memo_done:
         run_thesis = st.button(L["thesis_run"], type="primary")
-    with col_btn2:
-        if st.session_state.thesis_step > 0 or st.session_state.thesis_sections:
-            if st.button("🔄 Reset", key="thesis_reset"):
-                st.session_state.thesis_step = 0
-                st.session_state.thesis_sections = {}
-                st.session_state.thesis_text = ""
-                st.rerun()
+    else:
+        run_thesis = False
 
     if run_thesis:
         st.session_state.thesis_step = 1
         st.session_state.thesis_sections = {}
         st.session_state.thesis_text = ""
+        st.session_state.thesis_snapshot = _current_snapshot
         st.rerun()
 
     # ── Sequential execution: one step per rerun ───────────────────────────
@@ -1693,7 +1690,7 @@ with tab_screen:
     elif st.session_state.thesis_step == 3:
         _data = _deal_data_block()
         with st.spinner("Generating Conditions…  (3/3)"):
-            ok = _run_step(api_key_val, _prompt_conditions(_data), "WHAT MUST BE TRUE")
+            ok = _run_step(api_key_val, _prompt_conditions(_data), "CONDITIONS FOR SUCCESS")
         st.session_state.thesis_step = 4 if ok else 0
         st.rerun()
 
@@ -1701,7 +1698,7 @@ with tab_screen:
     SECTION_CFG = [
         ("VERDICT",          "Verdict",          "#4f8ef7"),
         ("KEY RISKS",        "Key Risks",        "#ff6b6b"),
-        ("WHAT MUST BE TRUE","What Must Be True","#ffaa00"),
+        ("CONDITIONS FOR SUCCESS","Conditions for Success","#ffaa00"),
     ]
 
     secs = st.session_state.thesis_sections
@@ -1729,22 +1726,6 @@ with tab_screen:
                 st.warning(body)
             else:
                 st.markdown(body)
-
-        # ── Debug expander ─────────────────────────────────────────────────
-        with st.expander("🔍 Debug: Raw AI Responses", expanded=False):
-            for sec_key, label, _ in SECTION_CFG:
-                raw_val  = secs.get(f"_raw_{sec_key}", secs.get(sec_key, ""))
-                model_used = secs.get(f"_model_{sec_key}", "")
-                if raw_val:
-                    st.markdown(f"**{label}** — model: `{model_used}` | {len(raw_val)} chars, {len(raw_val.splitlines())} lines")
-                    st.text_area(
-                        label=f"raw_{sec_key}",
-                        value=raw_val,
-                        height=200,
-                        disabled=True,
-                        key=f"dbg_{sec_key}",
-                        label_visibility="collapsed",
-                    )
 
         st.caption("Generated by Groq (LLaMA) — analytical support only, not investment advice")
 

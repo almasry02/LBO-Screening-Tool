@@ -31,3 +31,5 @@ build/
 *.egg-info/
 
 #Doku
+*.txt
+Doku

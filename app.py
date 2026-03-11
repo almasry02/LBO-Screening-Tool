@@ -1612,32 +1612,35 @@ with tab_screen:
         if raw.startswith("⚠️"):
             st.warning(raw)
         else:
+            # ── DEBUG EXPANDER ── shows exact raw API string so rendering bugs can be fixed
+            with st.expander("🔍 Debug: Raw API response (copy & send to developer)", expanded=False):
+                st.code(repr(raw), language=None)
+                st.text_area("Plain view", value=raw, height=300, key="thesis_debug_plain", disabled=True)
+
             import re as _re
 
-            # ── Normalise: Gemini sometimes returns literal "\n" escape sequences
-            #    instead of real newline characters. Fix both variants.
+            # Normalise literal \n escape sequences Gemini sometimes returns
             normalized = raw.replace("\\n", "\n")
-
-            # ── Split into bullet blocks on "1." / "2." / "3." at start of line
-            #    Works whether bullets are separated by real newlines OR run together.
-            #    The pattern matches even if newlines are missing by splitting on the
-            #    digit-dot that starts each new bullet anywhere in the string.
-            bullet_blocks = _re.split(r'(?:(?<=\n)|^)(?=\s*[123][.)]\s)', normalized, flags=_re.MULTILINE)
-            bullet_blocks = [b.strip() for b in bullet_blocks if b.strip()]
 
             BULLET_COLORS = ["#4f8ef7", "#00cc88", "#ffaa00"]
             BULLET_LABELS = ["Operational Improvement", "Deleveraging", "Strategic / Exit"]
 
-            if len(bullet_blocks) >= 2:
-                for i, block in enumerate(bullet_blocks[:3]):
-                    color = BULLET_COLORS[i % len(BULLET_COLORS)]
-                    # Remove the leading "1. " numbering from the block text
-                    text = _re.sub(r'^\s*\d+[.)]\s*', '', block, count=1).strip()
-                    # Also strip any bold markdown header that duplicates the label
-                    # e.g. "**Operational Improvement**\n" at the start
-                    text = _re.sub(r'^\*\*[^*\n]{3,60}\*\*\s*\n?', '', text).strip()
+            # ── Strategy 1: find numbered bullets anywhere in the text
+            # Matches "1.", "1)", "**1.**", "**1)**" with any content after
+            pattern = r'(?:^|\n)\s*\**\s*([1-3])[.)]\**\s*(.*?)(?=(?:\n\s*\**\s*[1-3][.)]\**)|$)'
+            matches = _re.findall(pattern, normalized, flags=_re.DOTALL)
 
-                    # Colored divider header — only HTML, no text content here
+            if len(matches) >= 2:
+                for num_str, content in matches[:3]:
+                    i = int(num_str) - 1
+                    color = BULLET_COLORS[i]
+                    text = content.strip()
+                    # Strip trailing ** left after "**1." capture e.g. "Operational**\n..."
+                    text = _re.sub(r'^\*+\n?', '', text).strip()
+                    # Strip full bold title line e.g. "**Operational Improvement**\n"
+                    text = _re.sub(r'^\*\*[^*]{3,80}\*\*\s*\n?', '', text).strip()
+                    # Strip partial title where number consumed opening **: "Title Text**\n"
+                    text = _re.sub(r'^[^*\n]{3,80}\*\*\s*\n', '', text).strip()
                     st.markdown(
                         f'<div style="border-left:4px solid {color};'
                         f'padding:4px 0 4px 14px;margin:18px 0 6px 0">'
@@ -1645,25 +1648,28 @@ with tab_screen:
                         f'{i+1}. {BULLET_LABELS[i]}</span></div>',
                         unsafe_allow_html=True
                     )
-                    # st.text_area is read-only, auto-sizes to content, never clips,
-                    # perfect contrast in both themes — the only 100% reliable option
                     st.text_area(
-                        label="",
-                        value=text,
-                        height=max(90, min(400, text.count("\n") * 22 + len(text) // 6)),
-                        disabled=True,
-                        key=f"thesis_block_{i}",
+                        label="", value=text,
+                        height=max(100, min(450, len(text) // 4 + text.count("\n") * 20 + 60)),
+                        disabled=True, key=f"thesis_block_{i}",
                         label_visibility="collapsed",
                     )
             else:
-                # Fallback: single text_area — guaranteed full display, no clipping
+                # ── Strategy 2: split on section headers (bold lines)
+                sections = _re.split(r'\n(?=\*\*[A-Z])', normalized)
+                sections = [s.strip() for s in sections if s.strip()]
+                # Strip any preamble (text before first bold header or first number)
+                preamble_end = _re.search(r'(?m)^[\*\s]*[1-3][.)]\s|\n\*\*[A-Z]', normalized)
+                if preamble_end:
+                    normalized = normalized[preamble_end.start():].strip()
+
+                # ── Final fallback: dump everything verbatim — guaranteed complete
+                st.info("ℹ️ Could not split into 3 bullets — showing full response. Use the debug expander above to report the format.")
                 st.text_area(
-                    label="",
-                    value=normalized,
-                    height=max(150, min(600, normalized.count("\n") * 22 + len(normalized) // 6)),
-                    disabled=True,
-                    key="thesis_fallback",
-                    label_visibility="collapsed",
+                    label="Full AI Response", value=normalized,
+                    height=max(200, min(700, len(normalized) // 4 + normalized.count("\n") * 20 + 80)),
+                    disabled=True, key="thesis_fallback",
+                    label_visibility="visible",
                 )
 
         st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")

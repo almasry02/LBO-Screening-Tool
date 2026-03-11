@@ -25,6 +25,8 @@ from data_parser import (
     parse_file, REQUIRED_FIELDS, detect_currency_and_unit,
 )
 
+
+
 # ══════════════════════════════════════════════════════
 # CACHED ENGINE FUNCTIONS
 # All heavy math is wrapped in @st.cache_data so a slider
@@ -285,13 +287,13 @@ LANG = {
         "no_flags":"No red flags - structure appears feasible","sources":"Sources:",
         "hist_basis":"Historical basis","yrs":"yrs","hist_cagr":"Hist. CAGR",
         "avg_margin":"Avg EBITDA Margin","fwd_cagr":"Fwd CAGR",
-        "normalized":"normalized [R&P]","revenue_cagr":"Revenue CAGR",
+        "normalized":"normalized","revenue_cagr":"Revenue CAGR",
         "avg_ebitda":"Avg EBITDA Margin","ebitda_vol":"EBITDA Volatility",
         "fcf_conv":"FCF Conversion","capex_int":"CapEx Intensity",
         "nwc_int":"NWC Intensity","ic_avg":"Avg Interest Coverage",
         "norm_ebitda":"Norm. EBITDA","rev_ebitda_chart":"Revenue & EBITDA Trend",
-        "margin_trend":"Margin Trend & Volatility [MPE]",
-        "norm_basis":"Normalized LBO Basis [R&P]",
+        "margin_trend":"Margin Trend & Volatility",
+        "norm_basis":"Normalized LBO Basis ",
         "metric":"Metric","value":"Value","method":"Method",
         "norm_rev_row":"Revenue (normalized)","norm_ebi_row":"EBITDA (normalized)",
         "avg_mar_row":"EBITDA Margin (avg)","norm_cap_row":"CapEx (normalized)",
@@ -299,16 +301,16 @@ LANG = {
         "avg_m_curr":"Avg margin x current revenue","simple_avg":"Simple avg",
         "avg_cap_int":"Avg CapEx intensity x revenue",
         "nwc_int_delt":"NWC intensity x rev. growth",
-        "entry_struct":"Entry Structure [R&P p.152]","returns":"Returns [R&P p.160]",
-        "input_sum":"Normalized Entry P&L","fcf_proj":"FCF Projection [McK p.167]",
-        "dscr_dev":"DSCR Development [MPE]",
-        "debt_sched":"Debt Schedule (straight-line + cash sweep) [R&P p.156]",
+        "entry_struct":"Entry Structure","returns":"Returns",
+        "input_sum":"Normalized Entry P&L","fcf_proj":"FCF Projection",
+        "dscr_dev":"DSCR Development",
+        "debt_sched":"Debt Schedule (straight-line + cash sweep)",
         "debt_wfall":"Debt Paydown (Waterfall)","headroom":"Headroom",
-        "sens_title":"Sensitivity Analyses [R&P p.200]",
+        "sens_title":"Sensitivity Analyses",
         "irr_hm":"IRR vs Exit Multiple x Rev. CAGR",
         "dscr_hm":"DSCR vs Leverage x Interest Rate",
         "lev_hm":"IRR vs Exit Multiple x Equity Contribution",
-        "ds_title":"Downside Case [MPE]",
+        "ds_title":"Downside Case",
         "ds_cap":"Stress: Revenue -10% | EBITDA Margin -200bps | Exit Multiple -1.0x",
         "irr_buf":"IRR Buffer","dscr_buf":"DSCR Buffer",
         "floor":"Floor","warn":"Warn","hurdle":"Hurdle",
@@ -324,17 +326,17 @@ LANG = {
         "cash":"Cash","nwc":"NWC","capex":"CapEx",
         "score_title":"LBO Attractiveness Score",
         "score_sub":"Composite 0-100 · 6 weighted factors",
-        "cc_title":"Cash Conversion Analysis [McK]",
+        "cc_title":"Cash Conversion Analysis",
         "cc_label":"Cash Conversion (FCF Y1 / EBITDA)",
         "cc_excellent":"Excellent (>70%)","cc_normal":"Normal (50-70%)",
         "cc_critical":"Critical (30-50%)","cc_flag":"Red Flag (<30%)",
-        "rev_qual_title":"Revenue Quality [MPE]",
+        "rev_qual_title":"Revenue Quality",
         "rev_vol_label":"Revenue Volatility (StdDev/Mean)",
         "rev_stable":"Stable (<10%)","rev_moderate":"Moderate (10-20%)",
-        "rev_cyclical":"Cyclical (>20%)","debt_real_title":"Realistic Debt Capacity [MPE]",
+        "rev_cyclical":"Cyclical (>20%)","debt_real_title":"Realistic Debt Capacity",
         "dc_simple":"Simple (leverage x EBITDA)","dc_dscr":"DSCR-Constrained (1.30x floor)",
-        "dc_effective":"Effective (min of both)","overpay_title":"Entry Multiple vs. Industry Benchmarks [R&P]",
-        "bridge_title":"Value Creation Bridge [R&P p.162]",
+        "dc_effective":"Effective (min of both)","overpay_title":"Entry Multiple vs. Industry Benchmarks",
+        "bridge_title":"Value Creation Bridge",
         "bridge_sub":"IRR decomposed into 3 value drivers",
         "bridge_ebitda":"EBITDA Growth","bridge_mult":"Multiple Expansion",
         "bridge_debt":"Debt Paydown","bridge_interp":"Driver Interpretation",
@@ -377,7 +379,7 @@ LANG = {
         "avg_m_curr":"Avg-Marge x akt. Umsatz","simple_avg":"Einfacher Avg",
         "avg_cap_int":"Avg CapEx-Intensitaet x Umsatz",
         "nwc_int_delt":"NWC-Intensitaet x Rev.-Delta",
-        "entry_struct":"Entry-Struktur [R&P p.152]","returns":"Returns [R&P p.160]",
+        "entry_struct":"Entry-Struktur [R&P p.152]","returns":"Returns",
         "input_sum":"Normalisierte Entry P&L","fcf_proj":"FCF-Projektion [McK p.167]",
         "dscr_dev":"DSCR-Entwicklung [MPE]",
         "debt_sched":"Tilgungsplan (Straight-line + Cash Sweep) [R&P p.156]",
@@ -610,9 +612,24 @@ elif input_mode == "Moodys Orbis / Excel":
             st.success(f"Moodys Orbis | {n_years} yrs | {min(p.years) if p.years else '?'}-{max(p.years) if p.years else '?'} | {ccy['display']} | parsed in {st.session_state._upload_ms}ms")
             ts = p.get_timeseries_df()
             if not ts.empty:
-                timeseries_df = ts.sort_index(ascending=True)
+                col_rename = {
+                    "revenue": "Revenue", "ebitda": "EBITDA", "ebit": "EBIT",
+                    "depreciation": "D&A", "interest_expense": "Interest",
+                    "net_income": "Net Income", "cash": "Cash",
+                    "total_debt": "Total Debt", "net_working_capital": "NWC", "capex": "CapEx",
+                }
+                ts = ts.rename(columns={k: v for k, v in col_rename.items() if k in ts.columns})
+                if "Revenue" in ts.columns and "EBITDA" in ts.columns:
+                    ts["EBITDA Margin"] = ts["EBITDA"] / ts["Revenue"].replace(0, float("nan"))
+                ts_sorted = ts.sort_index(ascending=True)
+                timeseries_df = ts_sorted
+                st.session_state._upload_timeseries = ts_sorted
                 with st.expander("Time Series", expanded=False):
-                    st.dataframe(ts.style.format(lambda x: f"{x:,.0f}" if isinstance(x,(float,int)) and not pd.isna(x) else "n/a"), use_container_width=True)
+                    st.dataframe(ts.sort_index(ascending=False).style.format(
+                        lambda x: f"{x:,.0f}" if isinstance(x,(float,int)) and not pd.isna(x) else "n/a"
+                    ), use_container_width=True)
+            elif st.session_state.get("_upload_timeseries") is not None:
+                timeseries_df = st.session_state._upload_timeseries
             if n_years <= 3:
                 selected_years = p.years
             elif n_years == 4:
@@ -645,6 +662,9 @@ elif input_mode == "Moodys Orbis / Excel":
                 hist_metrics    = hm_u
                 parse_warnings  = pw_u
                 hist_years_used = yrs_u
+                # Restore timeseries_df from session state (survives re-renders)
+                if st.session_state.get("_upload_timeseries") is not None:
+                    timeseries_df = st.session_state._upload_timeseries
         else:
             p = parser; ccy = p.currency_info; mapping_result = p.auto_map()
             st.warning(f"Generic parser | {len(mapping_result['mapped'])}/{len(REQUIRED_FIELDS)} fields mapped")
@@ -666,7 +686,8 @@ elif input_mode == "Moodys Orbis / Excel":
 # ── GATE ───────────────────────────────────────────────
 ccy      = st.session_state.ccy
 sym      = ccy.get("symbol","")
-unit     = ccy.get("unit_label","")
+unit     = ccy.get(f"unit_label_{lang}", ccy.get("unit_label",""))  # for badge display
+axis_lbl = ccy.get("axis_label", ccy.get("symbol", ""))             # for chart y-axes — symbol only
 ccy_name = ccy.get("currency","")
 
 if company_inputs is None:
@@ -848,8 +869,17 @@ with tab_hist:
         hc7.metric(L["ic_avg"],      f"{h.interest_coverage_avg:.1f}x")
         hc8.metric(L["norm_ebitda"], f"{sym}{fmt_num(h.normalized_ebitda,lang)}")
 
-        if timeseries_df is not None and not timeseries_df.empty:
-            df_s  = timeseries_df.sort_index(ascending=True)
+        # Build timeseries from hist_metrics if timeseries_df is not available
+        _chart_df = timeseries_df
+        if (_chart_df is None or _chart_df.empty) and h.years_used and h.revenue_series and h.ebitda_series:
+            _chart_df = pd.DataFrame({
+                "Revenue": h.revenue_series,
+                "EBITDA":  h.ebitda_series,
+                "EBITDA Margin": h.margin_series if h.margin_series else [e/max(r,1) for r,e in zip(h.revenue_series, h.ebitda_series)],
+            }, index=h.years_used).sort_index()
+
+        if _chart_df is not None and not _chart_df.empty:
+            df_s  = _chart_df.sort_index(ascending=True)
             yidx  = [str(y) for y in df_s.index]
 
             st.markdown(f'<div class="section-hdr">{L["rev_ebitda_chart"]}</div>', unsafe_allow_html=True)
@@ -865,7 +895,7 @@ with tab_hist:
                     name="EBITDA Margin %", mode="lines+markers",
                     line=dict(color="#ffaa00",width=1.5,dash="dot"), yaxis="y2"))
             fig.update_layout(template="plotly_dark", height=320, barmode="group",
-                yaxis=dict(title=f"{sym} {unit}"),
+                yaxis=dict(title=axis_lbl),
                 yaxis2=dict(title="Margin %", overlaying="y", side="right", tickformat=".0%"),
                 legend=dict(x=0.01,y=0.99,bgcolor="rgba(0,0,0,0)"),
                 margin=dict(t=20,b=20,l=60,r=60))
@@ -912,7 +942,7 @@ with tab_lbo:
         st.markdown(f'<div class="section-hdr">{L["entry_struct"]}</div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
             "": [L["entry_ev"],L["entry_eq"],L["entry_debt"],L["net_lev"],L["debt_cap"]],
-            f"{sym} {unit}": [
+            f"{axis_lbl}": [
                 f"{sym}{fmt_num(results.entry_ev,lang)}",
                 f"{sym}{fmt_num(results.entry_equity,lang)} ({equity_pct:.0%})",
                 f"{sym}{fmt_num(results.entry_debt,lang)} ({1-equity_pct:.0%})",
@@ -938,7 +968,7 @@ with tab_lbo:
         st.dataframe(pd.DataFrame({
             L["metric"]: [L["revenue"],L["ebitda"],L["ebit"],L["da"],
                           L["interest"],L["tax"],L["debt"],L["cash"],L["nwc"],L["capex"]],
-            f"{sym} {unit}": [
+            f"{axis_lbl}": [
                 fmt_num(company_inputs.revenue,lang),
                 f"{fmt_num(company_inputs.ebitda,lang)} ({entry_margin:.1%})",
                 fmt_num(company_inputs.ebit,lang),
@@ -963,7 +993,7 @@ with tab_lbo:
         fig_fcf.add_trace(go.Scatter(x=yrs_x, y=results.fcf_series,
             mode="lines+markers", name="FCF", line=dict(color="#ffaa00",width=2.5)))
         fig_fcf.update_layout(template="plotly_dark", height=270, barmode="group",
-            yaxis_title=f"{sym} {unit}",
+            yaxis_title=axis_lbl,
             showlegend=False,   # ← no legend in chart
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_fcf, use_container_width=True)
@@ -999,7 +1029,7 @@ with tab_debt:
         decreasing=dict(marker_color="#00cc88"),
     ))
     fig_wf.update_layout(template="plotly_dark", height=250, title=L["debt_wfall"],
-        yaxis_title=f"{sym} {unit}", showlegend=False,
+        yaxis_title=axis_lbl, showlegend=False,
         margin=dict(t=40,b=20,l=60,r=20))
     st.plotly_chart(fig_wf, use_container_width=True)
 
@@ -1019,7 +1049,7 @@ with tab_sens:
     with s2:
         st.plotly_chart(_hm_fig(dscr_hm, L["dscr_hm"], "{:.2f}x",  T["warn_dscr"],
             f"{L['floor']} {T['min_dscr']}x"), use_container_width=True)
-    st.markdown(f'<div class="section-hdr">{L["lev_hm"]} [R&P]</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-hdr">{L["lev_hm"]} </div>', unsafe_allow_html=True)
     st.plotly_chart(_hm_fig(lev_hm, L["lev_hm"], "{:.1f}%", T["min_irr"]*100), use_container_width=True)
     st.caption(f"Thresholds: IRR >= {T['min_irr']:.0%} · DSCR >= {T['min_dscr']}x · Leverage <= {T['max_entry_leverage']}x")
 
@@ -1068,11 +1098,21 @@ with tab_score:
             name="Max", marker_color="rgba(30,40,60,0.5)", showlegend=False))
         fig_bar.add_trace(go.Bar(y=fnames, x=fvals, orientation="h",
             name="Score", marker_color=f_colors, showlegend=False,
-            text=[f"{v:.1f}/{m}" for v,m in zip(fvals,max_pts)],
+            text=["" for _ in fvals],  # no inline text
             textposition="outside"))
+        # Add labels as annotations always to the right of the max bar
+        for i, (fname, fval, mpt) in enumerate(zip(fnames, fvals, max_pts)):
+            fig_bar.add_annotation(
+                x=mpt + 1.5, y=fname,
+                text=f"<b>{fval:.1f}/{mpt}</b>",
+                showarrow=False,
+                xanchor="left",
+                font=dict(size=11, color="#e0e0e0"),
+                xref="x", yref="y",
+            )
         fig_bar.update_layout(template="plotly_dark", height=260, barmode="overlay",
-            xaxis=dict(range=[0,35], title="Score"),
-            margin=dict(t=10,b=20,l=110,r=70))
+            xaxis=dict(range=[0, 40], title="Score"),
+            margin=dict(t=10,b=20,l=110,r=80))
         st.plotly_chart(fig_bar, use_container_width=True)
     st.markdown("---")
 
@@ -1106,7 +1146,7 @@ with tab_score:
             texttemplate="%{y:,.0f}", textposition="outside",
         ))
         fig_cc.update_layout(template="plotly_dark", height=220,
-            yaxis_title=f"{sym} {unit}", showlegend=False,
+            yaxis_title=axis_lbl, showlegend=False,
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_cc, use_container_width=True)
     st.caption("Cash Conversion = FCF Y1 / EBITDA  [McK]")
@@ -1133,7 +1173,7 @@ with tab_score:
                 fig_rv.add_hline(y=mean_r, line_dash="dash", line_color="#ffaa00",
                     annotation_text=f"Avg {sym}{fmt_num(mean_r,lang)}")
                 fig_rv.update_layout(template="plotly_dark", height=200,
-                    yaxis_title=f"{sym} {unit}", showlegend=False,
+                    yaxis_title=axis_lbl, showlegend=False,
                     margin=dict(t=10,b=20,l=60,r=20))
                 st.plotly_chart(fig_rv, use_container_width=True)
         st.caption("Revenue Volatility = StdDev/Mean  [MPE]")
@@ -1159,7 +1199,7 @@ with tab_score:
         text=[f"{sym}{fmt_num(v,lang)}" for v in bar_vals], textposition="outside",
         showlegend=False))
     fig_dc.update_layout(template="plotly_dark", height=220,
-        yaxis_title=f"{sym} {unit}", showlegend=False,
+        yaxis_title=axis_lbl, showlegend=False,
         margin=dict(t=10,b=20,l=60,r=20))
     st.plotly_chart(fig_dc, use_container_width=True)
     st.caption("Realistic Debt Capacity = min(MaxLev x EBITDA, DSCR-constrained max)  [MPE]")
@@ -1297,7 +1337,7 @@ with tab_bridge:
         fig_cum.add_trace(go.Scatter(x=yrs_x, y=paid_d, mode="lines+markers",
             line=dict(color="#00cc88",width=2,dash="dot"), name="Debt Paid Down"))
         fig_cum.update_layout(template="plotly_dark", height=240,
-            yaxis_title=f"{sym} {unit}",
+            yaxis_title=axis_lbl,
             legend=dict(x=0.01,y=0.99,bgcolor="rgba(0,0,0,0)"),
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_cum, use_container_width=True)
@@ -1447,11 +1487,11 @@ with tab_screen:
     # ── Investment Thesis Generator ────────────────────
     st.markdown("---")
     st.markdown(f'<div class="section-hdr">{L["thesis_title"]}</div>', unsafe_allow_html=True)
-    th1,th2 = st.columns([2,1])
+    th1, th2 = st.columns([3, 1])
     with th2:
-        thesis_ind = st.selectbox(L["thesis_industry"],list(BENCHMARKS.keys()),key="thesis_ind")
+        thesis_ind = st.selectbox(L["thesis_industry"], list(BENCHMARKS.keys()), key="thesis_ind")
     with th1:
-        st.caption("AI-generated investment thesis — 3 value creation angles based on your LBO parameters")
+        st.caption("AI-generated investment thesis via Google Gemini Flash — 3 value creation angles based on your LBO parameters")
 
     if st.button(L["thesis_run"],type="primary"):
         bm_lo2,bm_hi2 = BENCHMARKS[thesis_ind]; bm_m2=(bm_lo2+bm_hi2)/2
@@ -1473,41 +1513,135 @@ with tab_screen:
             "3. Strategic / Buy-and-build or exit optionality\n"
             "Each bullet: 2-3 sentences. Be specific to the numbers. No preamble."
         )
-        with st.spinner(L["thesis_loading"]):
-            try:
-                import urllib.request, json as _json
-                body = _json.dumps({"model":"claude-sonnet-4-20250514","max_tokens":600,
-                    "messages":[{"role":"user","content":prompt}]}).encode()
-                req = urllib.request.Request(
-                    "https://api.anthropic.com/v1/messages", data=body,
-                    headers={"Content-Type":"application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    st.session_state.thesis_text = _json.loads(resp.read())["content"][0]["text"]
-            except Exception as e:
-                st.session_state.thesis_text = f"[Thesis generation unavailable: {e}]"
+        
+        try:
+                import urllib.request, json as _json, urllib.error
 
-    if st.session_state.thesis_text:
-        lines = st.session_state.thesis_text.strip().split("\n")
-        cols_t = ["#4f8ef7","#00cc88","#ffaa00"]
-        block = []; bi = 0
-        for line in lines:
-            line = line.strip()
-            if not line: continue
-            if line[0].isdigit() and len(line)>1 and line[1] in ".)":
-                if block and bi>0:
-                    st.markdown(
-                        f'<div style="border-left:3px solid {cols_t[bi-1]};padding:8px 14px;margin:6px 0">'
-                        f'{"".join(block)}</div>', unsafe_allow_html=True)
-                    block=[]
-                bi+=1
-                block.append(f"<strong style='color:{cols_t[min(bi-1,2)]}'>{line}</strong><br>")
+                # Load API key from Streamlit secrets (secrets.toml: apikey = "...")
+                try:
+                    api_key = st.secrets["apikey"].strip()
+                except Exception:
+                    api_key = ""
+                if not api_key:
+                    st.session_state.thesis_text = "⚠️ API key not configured (add apikey to secrets.toml)"
+                else:
+                    def _gemini_list_models(key):
+                        """Return first flash model supporting generateContent, trying v1 then v1beta."""
+                        for api_ver in ("v1", "v1beta"):
+                            try:
+                                r = urllib.request.Request(
+                                    f"https://generativelanguage.googleapis.com/{api_ver}/models?key={key}",
+                                    headers={"Content-Type": "application/json"}, method="GET")
+                                with urllib.request.urlopen(r, timeout=10) as resp:
+                                    data = _json.loads(resp.read())
+                                    models = [
+                                        (m["name"], api_ver)
+                                        for m in data.get("models", [])
+                                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                                        and "flash" in m["name"].lower()
+                                    ]
+                                    if models:
+                                        return models[0]  # (full_name, api_ver)
+                            except Exception:
+                                continue
+                        return None, None
+
+                    def _gemini_generate(key, model_full_name, api_ver, prompt_text):
+                        """Call generateContent. model_full_name e.g. 'models/gemini-2.0-flash-001'"""
+                        url = (
+                            f"https://generativelanguage.googleapis.com/{api_ver}/"
+                            f"{model_full_name}:generateContent?key={key}"
+                        )
+                        body = _json.dumps({
+                            "contents": [{"parts": [{"text": prompt_text}]}],
+                            "generationConfig": {"maxOutputTokens": 700, "temperature": 0.7},
+                        }).encode()
+                        req = urllib.request.Request(
+                            url, data=body,
+                            headers={"Content-Type": "application/json"}, method="POST")
+                        with urllib.request.urlopen(req, timeout=30) as resp:
+                            data = _json.loads(resp.read())
+                            return data["candidates"][0]["content"]["parts"][0]["text"]
+
+                    # Step 1: discover available model dynamically
+                    model_name, api_ver = _gemini_list_models(api_key)
+                    if model_name is None:
+                        # ListModels failed — brute-force both API versions
+                        thesis_result = None
+                        last_err = None
+                        for api_ver_try in ("v1", "v1beta"):
+                            for mn in ("models/gemini-2.0-flash-001", "models/gemini-2.0-flash",
+                                       "models/gemini-1.5-flash-001", "models/gemini-1.5-flash"):
+                                try:
+                                    thesis_result = _gemini_generate(api_key, mn, api_ver_try, prompt)
+                                    break
+                                except urllib.error.HTTPError as e:
+                                    last_err = e
+                                    if e.code in (401, 403): raise
+                                    continue
+                            if thesis_result:
+                                break
+                        if not thesis_result:
+                            raise last_err
+                    else:
+                        # Step 2: call with discovered model
+                        thesis_result = _gemini_generate(api_key, model_name, api_ver, prompt)
+
+                    st.session_state.thesis_text = thesis_result
+                    st.rerun()
+
+        except urllib.error.HTTPError as e:
+            try:
+                api_msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
+            except Exception:
+                api_msg = str(e)
+            if e.code == 429:
+                hint = "429 — Rate limit. Wait ~60s, free quota: 15 req/min / 1500/day."
+            elif e.code in (401, 403):
+                hint = f"Invalid API Key ({e.code})"
             else:
-                block.append(line+" ")
-        if block:
-            st.markdown(
-                f'<div style="border-left:3px solid {cols_t[min(bi-1,2)]};padding:8px 14px;margin:6px 0">'
-                f'{"".join(block)}</div>', unsafe_allow_html=True)
-        st.caption("Generated by Claude Sonnet — analytical support only, not investment advice")
+                hint = f"HTTP {e.code}: {api_msg}"
+            st.session_state.thesis_text = f"⚠️ {hint}"
+            st.rerun()
+        except Exception as e:
+            st.session_state.thesis_text = f"⚠️ Unexpected error: {e}"
+            st.rerun()
+
+    # ── Display thesis result ──────────────────────────
+    if st.session_state.thesis_text:
+        raw = st.session_state.thesis_text.strip()
+        cols_t = ["#4f8ef7", "#00cc88", "#ffaa00"]
+
+        if raw.startswith("⚠️"):
+            st.warning(raw)
+        else:
+            import re as _re
+            # Split on lines starting with "1." / "2." / "3." (any format Gemini uses)
+            sections = _re.split(r'(?m)(?=^\s*[1-3]\s*[.):])', raw)
+            sections = [s.strip() for s in sections if s.strip() and _re.match(r'\s*[1-3]\s*[.):]\s*', s)]
+
+            if not sections:
+                # Pure fallback: show as plain text
+                st.text_area("", value=raw, height=300, disabled=True)
+            else:
+                for idx, section in enumerate(sections[:3]):
+                    col = cols_t[idx]
+                    # Remove leading number marker
+                    body = _re.sub(r'^\s*[1-3]\s*[.):]\s*', '', section).strip()
+                    # Clean stray ** at start/end
+                    body = body.strip("*").strip()
+                    # Convert **bold** → html bold
+                    body_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', body)
+                    # Newline to <br>
+                    body_html = body_html.replace("\n", "<br>")
+                    st.markdown(
+                        f'<div style="border-left:4px solid {col};padding:14px 18px;margin:10px 0;'
+                        f'background:rgba(0,0,0,0.15);border-radius:0 6px 6px 0;line-height:1.7">' +
+                        f'<div style="color:{col};font-weight:700;font-size:1.05em;margin-bottom:6px">'
+                        f'{"Operational Improvement" if idx==0 else "Deleveraging / Financial Engineering" if idx==1 else "Strategic / Exit Optionality"}</div>' +
+                        f'<div>{body_html}</div></div>',
+                        unsafe_allow_html=True)
+        st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")
 
 
 # ══ TAB 8: RISK & FLAGS ════════════════════════════════

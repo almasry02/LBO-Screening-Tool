@@ -1572,58 +1572,74 @@ with tab_screen:
 
     import urllib.request as _ul_mod, urllib.error as _ue_mod, json as _uj_mod
 
-    def _gcall_g(key, model, api_ver, text, max_tok=800):
+    # ── Groq API call (OpenAI-compatible endpoint) ─────────────────────────
+    # Models in preference order — all free tier, no truncation issues
+    _GROQ_MODELS = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama3-70b-8192",
+        "mixtral-8x7b-32768",
+        "llama3-8b-8192",
+    ]
+
+    def _groq_call(key, prompt_text, max_tok=1200):
+        """Call Groq chat completions API. Returns response text."""
         body = _uj_mod.dumps({
-            "contents": [{"parts": [{"text": text}]}],
-            "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.3},
+            "model": _GROQ_MODELS[0],
+            "messages": [
+                {"role": "system", "content": "You are a senior private equity screening analyst. Be concise and precise. Plain text only — no markdown, no bold, no asterisks."},
+                {"role": "user",   "content": prompt_text},
+            ],
+            "max_tokens": max_tok,
+            "temperature": 0.3,
         }).encode()
         req = _ul_mod.Request(
-            f"https://generativelanguage.googleapis.com/{api_ver}/{model}:generateContent?key={key}",
-            data=body, headers={"Content-Type": "application/json"}, method="POST")
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+            method="POST",
+        )
         with _ul_mod.urlopen(req, timeout=45) as r:
             resp = _uj_mod.loads(r.read())
-            return resp["candidates"][0]["content"]["parts"][0]["text"]
+            return resp["choices"][0]["message"]["content"]
 
-    def _find_model(key):
-        """Return (model_name, api_ver) for best available flash model."""
-        for av in ("v1", "v1beta"):
+    def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
+        """Try each Groq model in order until one succeeds."""
+        last_err = None
+        for model in _GROQ_MODELS:
             try:
+                body = _uj_mod.dumps({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "You are a senior private equity screening analyst. Be concise and precise. Plain text only — no markdown, no bold, no asterisks."},
+                        {"role": "user",   "content": prompt_text},
+                    ],
+                    "max_tokens": max_tok,
+                    "temperature": 0.3,
+                }).encode()
                 req = _ul_mod.Request(
-                    f"https://generativelanguage.googleapis.com/{av}/models?key={key}",
-                    headers={"Content-Type": "application/json"}, method="GET")
-                with _ul_mod.urlopen(req, timeout=10) as r:
-                    models = [
-                        (m["name"], av)
-                        for m in _uj_mod.loads(r.read()).get("models", [])
-                        if "generateContent" in m.get("supportedGenerationMethods", [])
-                        and any(x in m["name"].lower() for x in ("flash", "pro"))
-                    ]
-                    # prefer gemini-2.0-flash, then 1.5-flash, then pro
-                    for pref in ("2.0-flash", "1.5-flash", "flash", "pro"):
-                        for mn, av2 in models:
-                            if pref in mn.lower():
-                                return mn, av2
-            except Exception:
-                pass
-        # hard-coded fallback list
-        for av in ("v1", "v1beta"):
-            for mn in ("models/gemini-2.0-flash", "models/gemini-2.0-flash-001",
-                       "models/gemini-1.5-flash", "models/gemini-1.5-flash-001"):
-                try:
-                    _gcall_g(key, mn, av, "ping", max_tok=5)
-                    return mn, av
-                except _ue_mod.HTTPError as e:
-                    if e.code in (401, 403): raise
-                except Exception:
-                    pass
-        raise RuntimeError("No Gemini model available")
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    data=body,
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+                    method="POST",
+                )
+                with _ul_mod.urlopen(req, timeout=45) as r:
+                    resp = _uj_mod.loads(r.read())
+                    return resp["choices"][0]["message"]["content"], model
+            except _ue_mod.HTTPError as e:
+                if e.code in (401, 403):
+                    raise  # bad key — no point retrying
+                last_err = e
+            except Exception as e:
+                last_err = e
+        raise last_err or RuntimeError("No Groq model responded")
 
     def _run_step(key, prompt_text, step_name):
         try:
-            model, av = _find_model(key)
-            result = _gcall_g(key, model, av, prompt_text, max_tok=800)
+            result, model_used = _groq_call_with_fallback(key, prompt_text, max_tok=1200)
             st.session_state.thesis_sections[step_name] = result
             st.session_state.thesis_sections[f"_raw_{step_name}"] = result
+            st.session_state.thesis_sections[f"_model_{step_name}"] = model_used
             return True
         except _ue_mod.HTTPError as e:
             try:    msg = _uj_mod.loads(e.read()).get("error", {}).get("message", str(e))
@@ -1653,10 +1669,10 @@ with tab_screen:
         st.rerun()
 
     # ── Sequential execution: one step per rerun ───────────────────────────
-    api_key_val = st.secrets.get("apikey", "").strip()
+    api_key_val = st.secrets.get("grok_api", "").strip()
 
     if st.session_state.thesis_step > 0 and not api_key_val:
-        st.warning("⚠️ API key not configured — add 'apikey' to Streamlit secrets.")
+        st.warning("⚠️ Groq API key not configured — add 'grok_api' to Streamlit secrets.")
         st.session_state.thesis_step = 0
 
     elif st.session_state.thesis_step == 1:
@@ -1716,10 +1732,10 @@ with tab_screen:
         # ── Debug expander ─────────────────────────────────────────────────
         with st.expander("🔍 Debug: Raw AI Responses", expanded=False):
             for sec_key, label, _ in SECTION_CFG:
-                raw_key = f"_raw_{sec_key}"
-                raw_val = secs.get(raw_key, secs.get(sec_key, ""))
+                raw_val  = secs.get(f"_raw_{sec_key}", secs.get(sec_key, ""))
+                model_used = secs.get(f"_model_{sec_key}", "")
                 if raw_val:
-                    st.markdown(f"**{label}** ({len(raw_val)} chars, {len(raw_val.splitlines())} lines)")
+                    st.markdown(f"**{label}** — model: `{model_used}` | {len(raw_val)} chars, {len(raw_val.splitlines())} lines")
                     st.text_area(
                         label=f"raw_{sec_key}",
                         value=raw_val,
@@ -1729,7 +1745,7 @@ with tab_screen:
                         label_visibility="collapsed",
                     )
 
-        st.caption("Generated by Google Gemini — analytical support only, not investment advice")
+        st.caption("Generated by Groq (LLaMA) — analytical support only, not investment advice")
 
 # ══ TAB 8: RISK & FLAGS ════════════════════════════════
 with tab_flags:

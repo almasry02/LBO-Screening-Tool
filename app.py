@@ -1571,19 +1571,20 @@ with tab_screen:
         )
 
     import urllib.request as _ul_mod, urllib.error as _ue_mod, json as _uj_mod
+    import ssl as _ssl_mod
 
     # ── Groq API call (OpenAI-compatible endpoint) ─────────────────────────
     # Models in preference order — all free tier, no truncation issues
     _GROQ_MODELS = [
-        "llama-3.3-70b-versatile",   # beste Qualität, aktuell verfügbar
-        "llama-3.1-70b-versatile",   # Fallback 70b
-        "llama3-70b-8192",           # ältere 70b Variante
-        "llama-3.1-8b-instant",      # schnell, klein
-        "llama3-8b-8192",            # letzter Fallback
+        "meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 Scout
+        "llama-3.3-70b-versatile",                    # Llama 3.3 70b
+        "llama-3.1-8b-instant",                       # Llama 3.1 8b
+        "qwen/qwen3-32b",                             # Qwen3 32b
     ]
 
     def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
-        """Try each Groq model in order until one succeeds. Collects per-model errors for diagnosis."""
+        """Try each Groq model. Uses http.client directly to avoid proxy/urllib issues."""
+        import http.client as _hc, ssl as _ssl
         model_errors = []
         for model in _GROQ_MODELS:
             try:
@@ -1595,31 +1596,46 @@ with tab_screen:
                     ],
                     "max_tokens": max_tok,
                     "temperature": 0.3,
-                }).encode()
-                req = _ul_mod.Request(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    data=body,
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-                    method="POST",
+                }).encode("utf-8")
+
+                ctx = _ssl.create_default_context()
+                conn = _hc.HTTPSConnection("api.groq.com", timeout=45, context=ctx)
+                conn.request(
+                    "POST",
+                    "/openai/v1/chat/completions",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {key}",
+                        "User-Agent": "LBO-Screener/4.1",
+                        "Accept": "application/json",
+                        "Content-Length": str(len(body)),
+                    },
                 )
-                with _ul_mod.urlopen(req, timeout=45) as r:
-                    resp = _uj_mod.loads(r.read())
-                    return resp["choices"][0]["message"]["content"], model
-            except _ue_mod.HTTPError as e:
-                # Read body IMMEDIATELY before the stream closes
+                resp = conn.getresponse()
+                raw = resp.read()
+                conn.close()
+
+                if resp.status == 200:
+                    data = _uj_mod.loads(raw)
+                    return data["choices"][0]["message"]["content"], model
+
+                # Non-200: parse error body immediately
                 try:
-                    raw = e.read()
                     err_msg = _uj_mod.loads(raw).get("error", {}).get("message", raw.decode(errors="replace"))
                 except Exception:
-                    err_msg = str(e)
-                model_errors.append((model, e.code, err_msg))
-                if e.code == 401:
+                    err_msg = raw.decode(errors="replace")
+
+                model_errors.append((model, resp.status, err_msg))
+                if resp.status == 401:
                     raise RuntimeError(f"HTTP 401 – Ungültiger API-Key: {err_msg}")
                 # 403/404/429 → try next model
-            except Exception as e:
-                model_errors.append((model, "?", str(e)))
 
-        # All models failed — surface full diagnostic
+            except RuntimeError:
+                raise
+            except Exception as e:
+                model_errors.append((model, "ERR", str(e)))
+
         lines = "\n".join(f"  {m}: HTTP {c} – {msg}" for m, c, msg in model_errors)
         raise RuntimeError(f"Kein Groq-Modell verfügbar. Details:\n{lines}")
 

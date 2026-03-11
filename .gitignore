@@ -29,3 +29,5 @@ data/sample/*.csv
 dist/
 build/
 *.egg-info/
+
+#Doku

@@ -165,11 +165,11 @@ def detect_currency_and_unit(unit_string: str, lang: str = "en") -> dict:
     s = str(unit_string).lower().strip()
     currency = "USD" if "usd" in s else "EUR" if "eur" in s else "?"
     if any(x in s for x in ["tsd", "tausend", "thousand"]):
-        unit_label, scale_to_millions, raw_unit = "Tausend", 0.001, "tsd"
+        unit_label, scale_to_millions, raw_unit = "Thousand", 0.001, "tsd"
     elif any(x in s for x in ["mio", "million"]):
-        unit_label, scale_to_millions, raw_unit = "Millionen", 1.0, "mio"
+        unit_label, scale_to_millions, raw_unit = "Million", 1.0, "mio"
     elif any(x in s for x in ["mrd", "milliard", "billion"]):
-        unit_label, scale_to_millions, raw_unit = "Milliarden", 1000.0, "mrd"
+        unit_label, scale_to_millions, raw_unit = "Billion", 1000.0, "mrd"
     else:
         unit_label, scale_to_millions, raw_unit = "Einzelwert", 0.000001, "units"
     return {

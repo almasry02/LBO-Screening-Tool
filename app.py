@@ -1502,6 +1502,8 @@ with tab_screen:
         st.caption("AI-powered LBO screening memo — verdict, value creation drivers, key risks and investment conditions")
 
     if st.button(L["thesis_run"], type="primary"):
+        import urllib.request as _ul, urllib.error as _ue, json as _uj
+
         bm_lo2, bm_hi2 = BENCHMARKS[thesis_ind]
         bm_m2  = (bm_lo2 + bm_hi2) / 2
         ovp2   = entry_multiple - bm_m2
@@ -1509,8 +1511,6 @@ with tab_screen:
         _rv    = f"{hist_metrics.revenue_volatility:.1%}" if hist_metrics else "n/a"
         _mdscr = f"{min(results.dscr_series):.2f}x" if results.dscr_series else "n/a"
 
-        # ── Prompt: everything in one user message, NO system_instruction field ──
-        # system_instruction causes HTTP 400 on v1 endpoint; single-message works on all versions
         prompt = (
             "You are a private equity screening analyst.\n"
             "Assess whether this company is suitable for an LBO at early screening stage.\n"
@@ -1543,35 +1543,33 @@ with tab_screen:
             f"Value Creation Split: EBITDA Growth {eg:.0%} | Multiple Expansion {me:.0%} | Debt Paydown {dp:.0%}\n"
         )
 
-        def _gemini_call(key, model, api_ver, text, max_tok=900):
-            """Single generateContent call — contents only, no system_instruction."""
-            body = _json.dumps({
+        def _gcall(key, model, api_ver, text, max_tok=900):
+            body = _uj.dumps({
                 "contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.5},
             }).encode()
-            req = urllib.request.Request(
+            req = _ul.Request(
                 f"https://generativelanguage.googleapis.com/{api_ver}/{model}:generateContent?key={key}",
                 data=body, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return _json.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
+            with _ul.urlopen(req, timeout=30) as r:
+                return _uj.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
 
-        def _gemini_run(key, text, max_tok=900):
-            """Try model discovery first, then brute-force fallback."""
+        def _grun(key, text, max_tok=900):
             # Model discovery
             for av in ("v1", "v1beta"):
                 try:
-                    req = urllib.request.Request(
+                    req = _ul.Request(
                         f"https://generativelanguage.googleapis.com/{av}/models?key={key}",
                         headers={"Content-Type": "application/json"}, method="GET")
-                    with urllib.request.urlopen(req, timeout=10) as r:
+                    with _ul.urlopen(req, timeout=10) as r:
                         found = [
                             (m["name"], av)
-                            for m in _json.loads(r.read()).get("models", [])
+                            for m in _uj.loads(r.read()).get("models", [])
                             if "generateContent" in m.get("supportedGenerationMethods", [])
                             and "flash" in m["name"].lower()
                         ]
                         if found:
-                            return _gemini_call(key, found[0][0], found[0][1], text, max_tok)
+                            return _gcall(key, found[0][0], found[0][1], text, max_tok)
                 except Exception:
                     pass
             # Brute-force fallback
@@ -1580,27 +1578,25 @@ with tab_screen:
                 for mn in ("models/gemini-2.0-flash-001", "models/gemini-2.0-flash",
                            "models/gemini-1.5-flash-001", "models/gemini-1.5-flash"):
                     try:
-                        return _gemini_call(key, mn, av, text, max_tok)
-                    except urllib.error.HTTPError as e:
+                        return _gcall(key, mn, av, text, max_tok)
+                    except _ue.HTTPError as e:
                         last_err = e
                         if e.code in (401, 403): raise
-            raise last_err or RuntimeError("No Gemini model available")
+            raise last_err or RuntimeError("No Gemini model responded")
 
         try:
             api_key = st.secrets.get("apikey", "").strip()
             if not api_key:
                 st.session_state.thesis_text = "⚠️ API key not configured — add 'apikey' to Streamlit secrets."
             else:
-                st.session_state.thesis_text = _gemini_run(api_key, prompt)
-            st.rerun()
-        except urllib.error.HTTPError as e:
-            try:    msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
+                st.session_state.thesis_text = _grun(api_key, prompt)
+        except _ue.HTTPError as e:
+            try:    msg = _uj.loads(e.read()).get("error", {}).get("message", str(e))
             except: msg = str(e)
             st.session_state.thesis_text = f"⚠️ HTTP {e.code}: {msg}"
-            st.rerun()
         except Exception as e:
             st.session_state.thesis_text = f"⚠️ Error: {e}"
-            st.rerun()
+        st.rerun()
 
     # ── Display ────────────────────────────────────────────────────────────
     if st.session_state.thesis_text:
@@ -1610,7 +1606,6 @@ with tab_screen:
             st.warning(raw)
         else:
             clean = raw.replace("**", "")
-            HDRS  = ["VERDICT", "WHY THIS DEAL COULD WORK", "KEY RISKS", "WHAT MUST BE TRUE"]
             COLS  = {"VERDICT": "#e8eaf6", "WHY THIS DEAL COULD WORK": "#00cc88",
                      "KEY RISKS": "#ff6b6b", "WHAT MUST BE TRUE": "#ffaa00"}
             parts = _re.split(r"(?m)^(VERDICT|WHY THIS DEAL COULD WORK|KEY RISKS|WHAT MUST BE TRUE)\s*$", clean)
@@ -1665,19 +1660,22 @@ with tab_flags:
     dc3.metric(L["irr_buf"],  f"{results.irr-T['min_irr']:.1%}")
     dc4.metric(L["dscr_buf"], f"{results.dscr_base-T['min_dscr']:.2f}x")
 
+    # ── AI Risk Assessment ─────────────────────────────
     st.markdown("---")
     st.markdown('<div class="section-hdr">🤖 AI Risk Assessment</div>', unsafe_allow_html=True)
     if "ai_risks_text" not in st.session_state:
         st.session_state.ai_risks_text = ""
 
     if st.button("Generate AI Risk Assessment", key="btn_ai_risks"):
+        import urllib.request as _rul, urllib.error as _rue, json as _ruj
+
         _rv2   = f"{hist_metrics.revenue_volatility:.1%}" if hist_metrics else "n/a"
         _md2   = f"{min(results.dscr_series):.2f}x" if results.dscr_series else "n/a"
         _rp = (
             "You are a private equity risk analyst.\n"
             "Identify the three most significant risks for the LBO deal below.\n"
             "Analyze: revenue volatility, DSCR cushion, entry leverage, cash conversion, "
-            "and value creation concentration (reliance on multiple expansion vs. operational growth).\n"
+            "and value creation concentration (reliance on multiple expansion vs operational growth).\n"
             "Every risk must cite the exact metric. No general statements.\n"
             "No markdown. No bold. Plain text only.\n\n"
             "Output exactly this header then 3 numbered points:\n\n"
@@ -1693,18 +1691,17 @@ with tab_flags:
             f"Value Creation Split: EBITDA Growth {eg:.0%} | Multiple Expansion {me:.0%} | Debt Paydown {dp:.0%}\n"
             f"Base IRR: {results.irr:.1%} | LBO Score: {results.lbo_score:.0f}/100\n"
         )
-        import urllib.request as _ru, json as _rj, urllib.error as _re
 
-        def _risk_call(key, model, api_ver, text):
-            body = _rj.dumps({
+        def _rcall(key, model, api_ver, text):
+            body = _ruj.dumps({
                 "contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"maxOutputTokens": 400, "temperature": 0.3},
             }).encode()
-            req = _ru.Request(
+            req = _rul.Request(
                 f"https://generativelanguage.googleapis.com/{api_ver}/{model}:generateContent?key={key}",
                 data=body, headers={"Content-Type": "application/json"}, method="POST")
-            with _ru.urlopen(req, timeout=30) as r:
-                return _rj.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
+            with _rul.urlopen(req, timeout=30) as r:
+                return _ruj.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
 
         try:
             _rkey = st.secrets.get("apikey", "").strip()
@@ -1716,9 +1713,9 @@ with tab_flags:
                     for _rmn in ("models/gemini-2.0-flash-001", "models/gemini-2.0-flash",
                                  "models/gemini-1.5-flash-001", "models/gemini-1.5-flash"):
                         try:
-                            _rtxt = _risk_call(_rkey, _rmn, _rav, _rp)
+                            _rtxt = _rcall(_rkey, _rmn, _rav, _rp)
                             break
-                        except _re.HTTPError as _e:
+                        except _rue.HTTPError as _e:
                             if _e.code in (401, 403): raise
                     if _rtxt: break
                 st.session_state.ai_risks_text = _rtxt or "⚠️ No model responded."
@@ -1732,9 +1729,9 @@ with tab_flags:
             st.warning(_rc)
         else:
             st.markdown(
-                '<div style="background:rgba(255,107,107,0.08);border-left:3px solid #ff6b6b;'
-                'border-radius:0 6px 6px 0;padding:16px 20px;font-size:.92em;'
-                'line-height:1.85;color:#d8e8f8;white-space:pre-wrap;word-break:break-word">'
+                '<div style="background:rgba(255,107,107,0.08);border-left:3px solid #ff6b6b;' +
+                'border-radius:0 6px 6px 0;padding:16px 20px;font-size:.92em;' +
+                'line-height:1.85;color:#d8e8f8;white-space:pre-wrap;word-break:break-word">' +
                 f'{_rc}</div>',
                 unsafe_allow_html=True)
         st.caption("Generated by Google Gemini Flash — analytical support only")

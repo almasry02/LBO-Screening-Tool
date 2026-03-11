@@ -1525,50 +1525,65 @@ with tab_screen:
     # Three focused prompts — each fits comfortably in Free Tier token limits
     def _prompt_verdict(data):
         return (
-            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
-            "Write the VERDICT section for this LBO deal. Maximum 120 words.\n"
-            "Include: (1) LBO-suitable or not + primary reason with metric. "
-            "(2) Deal archetype: deleveraging play / growth LBO / multiple arbitrage / operational improvement — cite the supporting metrics. "
-            "(3) One sentence each on: cash flow reliability (cite cash conversion + min DSCR), "
-            "leverage sustainability (cite entry leverage vs covenant), "
-            "entry valuation (cite EV/EBITDA vs sector median), "
-            "value creation concentration (cite the three split percentages).\n"
-            "Start your response directly with the assessment. No header needed.\n\n"
+            "You are a private equity associate writing an initial screening memo. Plain text only. No markdown, no bullet points, no bold, no asterisks, no headers.\n"
+            "Write the VERDICT section. Maximum 150 words. Do not restate or list the input metrics.\n"
+            "Your output must contain exactly four elements, written as flowing prose:\n"
+            "First: State whether this transaction is structurally suitable for an LBO. Base this on three dimensions: "
+            "entry valuation relative to sector median, leverage capacity relative to the covenant maximum, and cash flow stability as indicated by Cash Conversion and Minimum DSCR. "
+            "Each judgment must reference the specific numerical value and explain what it implies for leveraged equity returns.\n"
+            "Second: Classify the deal into exactly one of these four archetypes: Deleveraging Play, Growth LBO, Multiple Arbitrage, or Operational Improvement. "
+            "Base the classification strictly on the Value Creation Split percentages. The archetype with the highest percentage determines the classification. "
+            "State the archetype and justify it by referencing the split percentages.\n"
+            "Third: Provide one sentence each on Cash Flow Reliability (Cash Conversion and Minimum DSCR and their implication for debt service), "
+            "Leverage Sustainability (Entry Leverage versus covenant maximum and the headroom this provides), "
+            "and Entry Valuation Attractiveness (EV/EBITDA versus sector median and whether the entry price supports downside protection).\n"
+            "Fourth: Write a single closing sentence that names the primary driver of investment returns for this deal — whether it is operational improvement, revenue growth, balance sheet deleveraging, or valuation normalization — and states what this means for execution risk.\n"
+            "Begin directly with the suitability assessment. No section header.\n\n"
             + data
         )
 
     def _prompt_risks(data):
         return (
-            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
-            "Write the KEY RISKS section for this LBO deal. Maximum 150 words.\n"
-            "Write exactly 3 numbered risks. Each risk: 2 sentences — first states the risk with the exact metric value, "
-            "second interprets the consequence or combination effect.\n"
-            "Risk 1: Revenue volatility — cite the StdDev/Mean coefficient and its implication for debt service.\n"
-            "Risk 2: DSCR + leverage combination — cite both minimum DSCR and entry leverage, "
-            "state whether together they are acceptable or dangerous.\n"
-            "Risk 3: Value creation concentration — cite all three split percentages (EBITDA Growth, Multiple Expansion, Debt Paydown), "
-            "state if deal is operationally driven or exit-dependent.\n"
-            "End with one synthesis sentence: The deal appears [X] but [key dependency].\n"
-            "Start directly with '1.' — no section header.\n\n"
+            "You are a private equity associate writing an initial screening memo. Plain text only. No markdown, no bullet points, no bold, no asterisks, no headers.\n"
+            "Write the KEY RISKS section. Maximum 160 words. Do not repeat information already stated in the Verdict. Do not restate raw input values as summaries.\n"
+            "Write exactly 3 numbered risks. Each risk consists of exactly two sentences.\n"
+            "Sentence 1 describes the structural issue and references the specific metric value. "
+            "Sentence 2 explains the potential deal impact: reduced deleveraging capacity, refinancing risk, or sensitivity to exit multiples.\n"
+            "Risk 1 must address revenue volatility and debt service stability. "
+            "Evaluate the Revenue Volatility (StdDev/Mean) in combination with the Minimum DSCR. "
+            "Explain how operating performance fluctuations could compress debt coverage during weaker periods and whether this creates refinancing or covenant risk.\n"
+            "Risk 2 must address the interaction between entry leverage and debt service capacity. "
+            "Analyze Entry Leverage relative to the covenant maximum and interpret the Minimum DSCR within that capital structure. "
+            "Characterize the leverage level as conservative, balanced, or aggressive given the company's operating profile.\n"
+            "Risk 3 must address value creation concentration. "
+            "Analyze the three split percentages and identify whether returns are overly dependent on multiple expansion or require aggressive operational improvement. "
+            "Explain how this concentration increases sensitivity to exit conditions or execution.\n"
+            "End with one synthesis sentence that characterizes the overall risk profile as structurally robust, balanced, or fragile, "
+            "and names the single primary dependency that determines whether the deal succeeds or fails.\n"
+            "Start directly with '1.' No section header.\n\n"
             + data
         )
 
     def _prompt_conditions(data):
         return (
-            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
-            "Write the CONDITIONS FOR SUCCESS section for this LBO deal. Maximum 120 words.\n"
-            "Write exactly 3 numbered conditions required to achieve target IRR. "
-            "Format each as: [Metric] must [condition] to [outcome].\n"
-            "Condition 1: minimum annual revenue growth rate to maintain IRR above target.\n"
-            "Condition 2: minimum EBITDA margin at exit to justify the entry multiple.\n"
-            "Condition 3: minimum cash conversion rate to deleverage to acceptable exit leverage.\n"
-            "After condition 3, on new lines, output exactly:\n"
-            "Revenue Volatility: [value]\n"
-            "Minimum DSCR: [value]\n"
-            "Value Creation Split: EBITDA Growth [%] | Multiple Expansion [%] | Debt Paydown [%]\n"
-            "Start directly with '1.' — no section header.\n\n"
+            "You are a private equity associate writing an initial screening memo. Plain text only. No markdown, no bullet points, no bold, no asterisks, no headers.\n"
+            "Write the CONDITIONS FOR SUCCESS section. Maximum 140 words. Do not summarize or restate the Deal Data Block. Focus on translating model outputs into operational requirements.\n"
+            "Write exactly 3 numbered conditions. Each condition must follow this exact format:\n"
+            "'[Operational or financial metric] must reach or exceed [threshold] in order to achieve [required outcome].'\n"
+            "Condition 1 must address revenue growth requirements. "
+            "Using the Revenue CAGR and Target IRR, state the minimum growth level required to sustain the investment thesis. "
+            "Connect revenue growth explicitly to EBITDA expansion and equity value creation.\n"
+            "Condition 2 must address exit profitability and multiple justification. "
+            "Using the EBITDA Margin and Entry Multiple relative to sector median, state the minimum operational performance required at exit "
+            "to support the entry valuation and avoid multiple compression.\n"
+            "Condition 3 must address cash generation and deleveraging. "
+            "Using the Cash Conversion metric, state the minimum level of free cash flow generation required to reduce leverage to a sustainable exit level. "
+            "Emphasize the link between cash conversion, debt repayment, and equity value protection.\n"
+            "End with one sentence naming the single most important operational lever that determines whether the deal achieves its target return.\n"
+            "Start directly with '1.' No section header.\n\n"
             + data
         )
+
 
     import urllib.request as _ul_mod, urllib.error as _ue_mod, json as _uj_mod
 
@@ -1590,7 +1605,7 @@ with tab_screen:
                 body = _uj_mod.dumps({
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": "You are a senior private equity screening analyst. Be concise and precise. Plain text only — no markdown, no bold, no asterisks."},
+                        {"role": "system", "content": "You are a private equity associate writing an initial screening memo. Be analytical and precise. Plain text only — no markdown, no bullet points, no bold, no asterisks, no headers."},
                         {"role": "user",   "content": prompt_text},
                     ],
                     "max_tokens": max_tok,
@@ -1621,7 +1636,7 @@ with tab_screen:
                 raise
             except Exception as e:
                 model_errors.append((model, "ERR", str(e)))
-        lines = "\n".join(f"  {m}: HTTP {c} – {msg}" for m, c, msg in model_errors)
+        lines = "\n".join(f"  {m}: HTTP {code} – {msg}" for m, code, msg in model_errors)
         raise RuntimeError(f"Kein Groq-Modell verfügbar. Details:\n{lines}")
 
     def _run_step(key, prompt_text, step_name):
@@ -1653,7 +1668,6 @@ with tab_screen:
         and st.session_state.thesis_snapshot == _current_snapshot
     )
 
-    # ── Run button: only show when no memo exists for current params ──
     if not _memo_done:
         run_thesis = st.button(L["thesis_run"], type="primary")
     else:

@@ -25,7 +25,10 @@ from data_parser import (
     parse_file, REQUIRED_FIELDS, detect_currency_and_unit,
 )
 
-
+def _detect_ccy(unit_string):
+    """Detect currency using current session language."""
+    lang = st.session_state.get("lang", "en")
+    return detect_currency_and_unit(unit_string, lang=lang)
 
 # ══════════════════════════════════════════════════════
 # CACHED ENGINE FUNCTIONS
@@ -433,17 +436,18 @@ LANG = {
 }
 
 
-def fmt_num(val, lang, dec=0):
+def fmt_num(val, lang, dec=0, sfx=""):
+    """Format number with thousand-separators + optional unit suffix (e.g. ' tsd.' or ' Mio.')"""
     s = f"{val:,.{dec}f}"
     if lang == "de":
         s = s.replace(",", "X").replace(".", ",").replace("X", ".")
-    return s
+    return s + sfx
 
 
 # ── SESSION STATE INIT ─────────────────────────────────
 _ss_defaults = {
     "T": DEFAULT_T.copy(), "F": DEFAULT_F.copy(),
-    "ccy": detect_currency_and_unit("EUR"), "lang": "en",
+    "ccy": detect_currency_and_unit("EUR", lang="en"), "lang": "en",
     "screener_companies": [], "screener_results": [],
     "thesis_text": "", "uploaded_data": None,
 }
@@ -554,14 +558,14 @@ ccy             = st.session_state.ccy
 
 # ── DEMO ───────────────────────────────────────────────
 if input_mode == "Demo":
-    ccy = detect_currency_and_unit("tsd USD"); st.session_state.ccy = ccy
+    ccy = detect_currency_and_unit("tsd USD", lang=st.session_state.get("lang","en")); st.session_state.ccy = ccy
     company_inputs, hist_metrics, timeseries_df, hist_years_used = _build_demo_data()
     st.info(L["demo_info"])
 
 # ── MANUAL INPUT ───────────────────────────────────────
 elif input_mode == "Manual Input":
     unit_sel = st.selectbox("Unit", ["tsd EUR","tsd USD","Mio EUR","Mio USD"])
-    ccy = detect_currency_and_unit(unit_sel); st.session_state.ccy = ccy
+    ccy = detect_currency_and_unit(unit_sel, lang=st.session_state.get("lang","en")); st.session_state.ccy = ccy
     co_name = st.text_input("Company Name", "Target Co.")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -686,9 +690,13 @@ elif input_mode == "Moodys Orbis / Excel":
 # ── GATE ───────────────────────────────────────────────
 ccy      = st.session_state.ccy
 sym      = ccy.get("symbol","")
-unit     = ccy.get(f"unit_label_{lang}", ccy.get("unit_label",""))  # for badge display
-axis_lbl = ccy.get("axis_label", ccy.get("symbol", ""))             # for chart y-axes — symbol only
+unit     = ccy.get(f"unit_label_{lang}", ccy.get("unit_label",""))
 ccy_name = ccy.get("currency","")
+_raw     = ccy.get("raw_unit", "")
+# sfx: appended to every formatted number so the unit is always visible
+sfx      = " tsd." if _raw == "tsd" else " Mio." if _raw == "mio" else " Mrd." if _raw == "mrd" else ""
+# axis_lbl: used for all chart y-axis titles
+axis_lbl = f"{sym}{sfx}" if sfx else sym
 
 if company_inputs is None:
     st.markdown("## Select a data input mode")
@@ -800,7 +808,7 @@ st.markdown("---")
 # ── KPI ROWS ───────────────────────────────────────────
 k1,k2,k3,k4,k5,k6 = st.columns(6)
 for col,lbl,val in [
-    (k1,"Entry EV",       f"{sym}{fmt_num(results.entry_ev,lang)}"),
+    (k1,"Entry EV",       f"{sym}{fmt_num(results.entry_ev, lang, sfx=sfx)}"),
     (k2,"Entry Leverage", f"{results.entry_leverage:.1f}x"),
     (k3,"DSCR Y1",        f"{results.dscr_base:.2f}x"),
     (k4,"Base IRR",       f"{results.irr:.1%}"),
@@ -814,7 +822,7 @@ for col,lbl,val in [
     (r2a,"Downside IRR",  f"{results.downside_irr:.1%}"),
     (r2b,"Downside MOIC", f"{results.downside_moic:.2f}x"),
     (r2c,"Cash Conv.",    f"{results.cash_conversion:.1%}"),
-    (r2d,"Exit Equity",   f"{sym}{fmt_num(results.exit_equity,lang)}"),
+    (r2d,"Exit Equity",   f"{sym}{fmt_num(results.exit_equity, lang, sfx=sfx)}"),
     (r2e,"Interest Cov.", f"{results.interest_coverage:.1f}x"),
     (r2f,"LBO Score",     f"{results.lbo_score:.0f}/100"),
 ]:
@@ -867,7 +875,7 @@ with tab_hist:
         hc5.metric(L["capex_int"],   f"{h.capex_intensity_avg:.1%}")
         hc6.metric(L["nwc_int"],     f"{h.nwc_intensity_avg:.1%}")
         hc7.metric(L["ic_avg"],      f"{h.interest_coverage_avg:.1f}x")
-        hc8.metric(L["norm_ebitda"], f"{sym}{fmt_num(h.normalized_ebitda,lang)}")
+        hc8.metric(L["norm_ebitda"], f"{sym}{fmt_num(h.normalized_ebitda, lang, sfx=sfx)}")
 
         # Build timeseries from hist_metrics if timeseries_df is not available
         _chart_df = timeseries_df
@@ -895,7 +903,7 @@ with tab_hist:
                     name="EBITDA Margin %", mode="lines+markers",
                     line=dict(color="#ffaa00",width=1.5,dash="dot"), yaxis="y2"))
             fig.update_layout(template="plotly_dark", height=320, barmode="group",
-                yaxis=dict(title=axis_lbl),
+                yaxis=dict(title=axis_lbl, tickformat=",.0f"),
                 yaxis2=dict(title="Margin %", overlaying="y", side="right", tickformat=".0%"),
                 legend=dict(x=0.01,y=0.99,bgcolor="rgba(0,0,0,0)"),
                 margin=dict(t=20,b=20,l=60,r=60))
@@ -921,11 +929,11 @@ with tab_hist:
         st.markdown(f'<div class="section-hdr">{L["norm_basis"]}</div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
             L["metric"]: [L["norm_rev_row"],L["norm_ebi_row"],L["avg_mar_row"],L["norm_cap_row"],L["nwc_del_row"]],
-            L["value"]:  [f"{sym}{fmt_num(h.normalized_revenue,lang)}",
-                          f"{sym}{fmt_num(h.normalized_ebitda,lang)}",
+            L["value"]:  [f"{sym}{fmt_num(h.normalized_revenue, lang, sfx=sfx)}",
+                          f"{sym}{fmt_num(h.normalized_ebitda, lang, sfx=sfx)}",
                           f"{h.ebitda_margin_avg:.1%}",
-                          f"{sym}{fmt_num(h.normalized_capex,lang)}",
-                          f"{sym}{fmt_num(h.normalized_nwc_delta,lang)}"],
+                          f"{sym}{fmt_num(h.normalized_capex, lang, sfx=sfx)}",
+                          f"{sym}{fmt_num(h.normalized_nwc_delta, lang, sfx=sfx)}"],
             L["method"]: [L["curr_rev"],L["avg_m_curr"],
                           f"{L['simple_avg']} ({len(h.years_used)} {L['yrs']})",
                           L["avg_cap_int"],L["nwc_int_delt"]],
@@ -942,12 +950,12 @@ with tab_lbo:
         st.markdown(f'<div class="section-hdr">{L["entry_struct"]}</div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
             "": [L["entry_ev"],L["entry_eq"],L["entry_debt"],L["net_lev"],L["debt_cap"]],
-            f"{axis_lbl}": [
-                f"{sym}{fmt_num(results.entry_ev,lang)}",
-                f"{sym}{fmt_num(results.entry_equity,lang)} ({equity_pct:.0%})",
-                f"{sym}{fmt_num(results.entry_debt,lang)} ({1-equity_pct:.0%})",
+            axis_lbl: [
+                f"{sym}{fmt_num(results.entry_ev, lang, sfx=sfx)}",
+                f"{sym}{fmt_num(results.entry_equity, lang, sfx=sfx)} ({equity_pct:.0%})",
+                f"{sym}{fmt_num(results.entry_debt, lang, sfx=sfx)} ({1-equity_pct:.0%})",
                 f"{results.entry_leverage:.1f}x Net Debt/EBITDA",
-                f"{sym}{fmt_num(results.debt_capacity,lang)} ({T['max_debt_ebitda']}x EBITDA)",
+                f"{sym}{fmt_num(results.debt_capacity, lang, sfx=sfx)} ({T['max_debt_ebitda']}x EBITDA)",
             ]
         }).set_index(""), use_container_width=True)
 
@@ -956,9 +964,9 @@ with tab_lbo:
             "": [L["exit_ebitda"],L["exit_ev"],L["exit_eq"],
                  L["base_irr"],L["base_moic"],L["ds_irr"],L["ds_moic"]],
             "Value": [
-                f"{sym}{fmt_num(results.exit_ebitda,lang)}",
-                f"{sym}{fmt_num(results.exit_ev,lang)}",
-                f"{sym}{fmt_num(results.exit_equity,lang)}",
+                f"{sym}{fmt_num(results.exit_ebitda, lang, sfx=sfx)}",
+                f"{sym}{fmt_num(results.exit_ev, lang, sfx=sfx)}",
+                f"{sym}{fmt_num(results.exit_equity, lang, sfx=sfx)}",
                 f"{results.irr:.1%}", f"{results.moic:.2f}x",
                 f"{results.downside_irr:.1%}", f"{results.downside_moic:.2f}x",
             ]
@@ -968,17 +976,17 @@ with tab_lbo:
         st.dataframe(pd.DataFrame({
             L["metric"]: [L["revenue"],L["ebitda"],L["ebit"],L["da"],
                           L["interest"],L["tax"],L["debt"],L["cash"],L["nwc"],L["capex"]],
-            f"{axis_lbl}": [
-                fmt_num(company_inputs.revenue,lang),
-                f"{fmt_num(company_inputs.ebitda,lang)} ({entry_margin:.1%})",
-                fmt_num(company_inputs.ebit,lang),
-                fmt_num(company_inputs.depreciation,lang),
-                fmt_num(company_inputs.interest_expense,lang),
+            axis_lbl: [
+                fmt_num(company_inputs.revenue, lang, sfx=sfx),
+                f"{fmt_num(company_inputs.ebitda, lang, sfx=sfx)} ({entry_margin:.1%})",
+                fmt_num(company_inputs.ebit, lang, sfx=sfx),
+                fmt_num(company_inputs.depreciation, lang, sfx=sfx),
+                fmt_num(company_inputs.interest_expense, lang, sfx=sfx),
                 f"{company_inputs.tax_rate:.1%}",
-                fmt_num(company_inputs.total_debt,lang),
-                fmt_num(company_inputs.cash,lang),
-                fmt_num(company_inputs.net_working_capital,lang),
-                fmt_num(company_inputs.capex,lang),
+                fmt_num(company_inputs.total_debt, lang, sfx=sfx),
+                fmt_num(company_inputs.cash, lang, sfx=sfx),
+                fmt_num(company_inputs.net_working_capital, lang, sfx=sfx),
+                fmt_num(company_inputs.capex, lang, sfx=sfx),
             ]
         }).set_index(L["metric"]), use_container_width=True)
 
@@ -993,7 +1001,7 @@ with tab_lbo:
         fig_fcf.add_trace(go.Scatter(x=yrs_x, y=results.fcf_series,
             mode="lines+markers", name="FCF", line=dict(color="#ffaa00",width=2.5)))
         fig_fcf.update_layout(template="plotly_dark", height=270, barmode="group",
-            yaxis_title=axis_lbl,
+            yaxis=dict(title=axis_lbl, tickformat=",.0f"),
             showlegend=False,   # ← no legend in chart
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_fcf, use_container_width=True)
@@ -1017,8 +1025,12 @@ with tab_debt:
     st.markdown(f'<div class="src-tag">{L["debt_sched"]}</div>', unsafe_allow_html=True)
     ds = results.debt_schedule
     st.dataframe(ds.style.format({
-        "Opening":"{:,.1f}","Interest":"{:,.1f}","Amortization":"{:,.1f}",
-        "Cash Sweep":"{:,.1f}","Closing":"{:,.1f}","Coverage":"{:.2f}x",
+        "Opening":     lambda v: f"{v:,.1f}{sfx}",
+        "Interest":    lambda v: f"{v:,.1f}{sfx}",
+        "Amortization":lambda v: f"{v:,.1f}{sfx}",
+        "Cash Sweep":  lambda v: f"{v:,.1f}{sfx}",
+        "Closing":     lambda v: f"{v:,.1f}{sfx}",
+        "Coverage":    lambda v: f"{v:.2f}x",
     }).background_gradient(subset=["Closing"], cmap="RdYlGn"), use_container_width=True)
 
     fig_wf = go.Figure(go.Waterfall(
@@ -1029,15 +1041,15 @@ with tab_debt:
         decreasing=dict(marker_color="#00cc88"),
     ))
     fig_wf.update_layout(template="plotly_dark", height=250, title=L["debt_wfall"],
-        yaxis_title=axis_lbl, showlegend=False,
+        yaxis=dict(title=axis_lbl, tickformat=",.0f"), showlegend=False,
         margin=dict(t=40,b=20,l=60,r=20))
     st.plotly_chart(fig_wf, use_container_width=True)
 
     dc1,dc2,dc3 = st.columns(3)
-    dc1.metric(f"Debt Capacity ({T['max_debt_ebitda']}x)", f"{sym}{fmt_num(results.debt_capacity,lang)}")
-    dc2.metric("Entry Debt", f"{sym}{fmt_num(results.entry_debt,lang)}")
+    dc1.metric(f"Debt Capacity ({T['max_debt_ebitda']}x)", f"{sym}{fmt_num(results.debt_capacity, lang, sfx=sfx)}")
+    dc2.metric("Entry Debt", f"{sym}{fmt_num(results.entry_debt, lang, sfx=sfx)}")
     hw = results.debt_capacity - results.entry_debt
-    dc3.metric(L["headroom"], f"{sym}{fmt_num(hw,lang)}", delta="OK" if hw>0 else "Exceeded")
+    dc3.metric(L["headroom"], f"{sym}{fmt_num(hw, lang, sfx=sfx)}", delta="OK" if hw>0 else "Exceeded")
 
 # ══ TAB 4: SENSITIVITIES ═══════════════════════════════
 with tab_sens:
@@ -1127,7 +1139,7 @@ with tab_score:
         st.metric(L["cc_label"], f"{cc:.1%}")
     with ccb:
         st.markdown(_badge(cc_text, cc_color,
-            f"FCF Y1 {sym}{fmt_num(results.fcf_series[0] if results.fcf_series else 0, lang)} / EBITDA {sym}{fmt_num(company_inputs.ebitda,lang)}"),
+            f"FCF Y1 {sym}{fmt_num(results.fcf_series[0] if results.fcf_series else 0, lang, sfx=sfx)} / EBITDA {sym}{fmt_num(company_inputs.ebitda, lang, sfx=sfx)}"),
             unsafe_allow_html=True)
     with ccc:
         ebi   = company_inputs.ebitda
@@ -1146,7 +1158,7 @@ with tab_score:
             texttemplate="%{y:,.0f}", textposition="outside",
         ))
         fig_cc.update_layout(template="plotly_dark", height=220,
-            yaxis_title=axis_lbl, showlegend=False,
+            yaxis=dict(title=axis_lbl, tickformat=",.0f"), showlegend=False,
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_cc, use_container_width=True)
     st.caption("Cash Conversion = FCF Y1 / EBITDA  [McK]")
@@ -1171,9 +1183,9 @@ with tab_score:
                 fig_rv.add_trace(go.Scatter(x=ry, y=rv_s, mode="lines+markers",
                     line=dict(color="#4f8ef7",width=2), showlegend=False))
                 fig_rv.add_hline(y=mean_r, line_dash="dash", line_color="#ffaa00",
-                    annotation_text=f"Avg {sym}{fmt_num(mean_r,lang)}")
+                    annotation_text=f"Avg {sym}{fmt_num(mean_r, lang, sfx=sfx)}")
                 fig_rv.update_layout(template="plotly_dark", height=200,
-                    yaxis_title=axis_lbl, showlegend=False,
+                    yaxis=dict(title=axis_lbl, tickformat=",.0f"), showlegend=False,
                     margin=dict(t=10,b=20,l=60,r=20))
                 st.plotly_chart(fig_rv, use_container_width=True)
         st.caption("Revenue Volatility = StdDev/Mean  [MPE]")
@@ -1186,20 +1198,20 @@ with tab_score:
     dc_dscr   = results.debt_capacity_dscr
     dc_eff    = min(dc_simple, dc_dscr)
     dca,dcb,dcc,dcd = st.columns(4)
-    dca.metric(L["dc_simple"],    f"{sym}{fmt_num(dc_simple,lang)}", help=f"{T['max_debt_ebitda']}x EBITDA")
-    dcb.metric(L["dc_dscr"],      f"{sym}{fmt_num(dc_dscr,lang)}",  help="Binary search: max debt @ DSCR>=1.30x")
-    dcc.metric(L["dc_effective"], f"{sym}{fmt_num(dc_eff,lang)}",   delta=f"{dc_eff/max(company_inputs.ebitda,1):.1f}x EBITDA")
-    dcd.metric("Entry Debt",      f"{sym}{fmt_num(results.entry_debt,lang)}",
-               delta=f"Headroom {sym}{fmt_num(dc_eff-results.entry_debt,lang)}")
+    dca.metric(L["dc_simple"],    f"{sym}{fmt_num(dc_simple, lang, sfx=sfx)}", help=f"{T['max_debt_ebitda']}x EBITDA")
+    dcb.metric(L["dc_dscr"],      f"{sym}{fmt_num(dc_dscr, lang, sfx=sfx)}",  help="Binary search: max debt @ DSCR>=1.30x")
+    dcc.metric(L["dc_effective"], f"{sym}{fmt_num(dc_eff, lang, sfx=sfx)}",   delta=f"{dc_eff/max(company_inputs.ebitda,1):.1f}x EBITDA")
+    dcd.metric("Entry Debt",      f"{sym}{fmt_num(results.entry_debt, lang, sfx=sfx)}",
+               delta=f"Headroom {sym}{fmt_num(dc_eff-results.entry_debt, lang, sfx=sfx)}")
     fig_dc = go.Figure()
     bar_labs = [L["dc_simple"],L["dc_dscr"],L["dc_effective"],"Entry Debt"]
     bar_vals = [dc_simple,dc_dscr,dc_eff,results.entry_debt]
     bar_cols = ["#4f8ef7","#ffaa00","#00cc88","#ff4b4b"]
     fig_dc.add_trace(go.Bar(x=bar_labs, y=bar_vals, marker_color=bar_cols,
-        text=[f"{sym}{fmt_num(v,lang)}" for v in bar_vals], textposition="outside",
+        text=[f"{sym}{fmt_num(v, lang, sfx=sfx)}" for v in bar_vals], textposition="outside",
         showlegend=False))
     fig_dc.update_layout(template="plotly_dark", height=220,
-        yaxis_title=axis_lbl, showlegend=False,
+        yaxis=dict(title=axis_lbl, tickformat=",.0f"), showlegend=False,
         margin=dict(t=10,b=20,l=60,r=20))
     st.plotly_chart(fig_dc, use_container_width=True)
     st.caption("Realistic Debt Capacity = min(MaxLev x EBITDA, DSCR-constrained max)  [MPE]")
@@ -1337,7 +1349,7 @@ with tab_bridge:
         fig_cum.add_trace(go.Scatter(x=yrs_x, y=paid_d, mode="lines+markers",
             line=dict(color="#00cc88",width=2,dash="dot"), name="Debt Paid Down"))
         fig_cum.update_layout(template="plotly_dark", height=240,
-            yaxis_title=axis_lbl,
+            yaxis=dict(title=axis_lbl, tickformat=",.0f"),
             legend=dict(x=0.01,y=0.99,bgcolor="rgba(0,0,0,0)"),
             margin=dict(t=10,b=20,l=60,r=20))
         st.plotly_chart(fig_cum, use_container_width=True)
@@ -1400,8 +1412,8 @@ with tab_screen:
         for i,co in enumerate(st.session_state.screener_companies):
             cc1,cc2 = st.columns([5,1])
             with cc1:
-                st.caption(f"{i+1}. {co['name']} — Rev {sym}{fmt_num(co['ci'].revenue,lang)} | "
-                           f"EBITDA {sym}{fmt_num(co['ci'].ebitda,lang)} | "
+                st.caption(f"{i+1}. {co['name']} — Rev {sym}{fmt_num(co['ci'].revenue, lang, sfx=sfx)} | "
+                           f"EBITDA {sym}{fmt_num(co['ci'].ebitda, lang, sfx=sfx)} | "
                            f"Entry {co['entry']}x | Hold {co['hold']}yr")
             with cc2:
                 if st.button("Remove",key=f"rm_{i}"): rm_idx=i
@@ -1487,11 +1499,14 @@ with tab_screen:
     # ── Investment Thesis Generator ────────────────────
     st.markdown("---")
     st.markdown(f'<div class="section-hdr">{L["thesis_title"]}</div>', unsafe_allow_html=True)
-    th1, th2 = st.columns([3, 1])
+    th1,th2,th3 = st.columns([2,1,1])
     with th2:
-        thesis_ind = st.selectbox(L["thesis_industry"], list(BENCHMARKS.keys()), key="thesis_ind")
+        thesis_ind = st.selectbox(L["thesis_industry"],list(BENCHMARKS.keys()),key="thesis_ind")
+    with th3:
+        gemini_key = st.text_input("Gemini API Key", type="password", key="gemini_key",
+            help="Free at aistudio.google.com — 1,500 requests/day, no credit card needed")
     with th1:
-        st.caption("AI-generated investment thesis via Google Gemini Flash — 3 value creation angles based on your LBO parameters")
+        st.caption("AI-generated investment thesis via Google Gemini Flash (free) — 3 value creation angles based on your LBO parameters")
 
     if st.button(L["thesis_run"],type="primary"):
         bm_lo2,bm_hi2 = BENCHMARKS[thesis_ind]; bm_m2=(bm_lo2+bm_hi2)/2
@@ -1499,7 +1514,7 @@ with tab_screen:
         prompt = (
             "You are a senior PE analyst. Write 3 concise investment thesis bullets for an LBO deal.\n\n"
             f"Industry: {thesis_ind}\n"
-            f"Revenue: {sym}{fmt_num(company_inputs.revenue,lang)} {unit}\n"
+            f"Revenue: {sym}{fmt_num(company_inputs.revenue, lang, sfx=sfx)}\n"
             f"EBITDA Margin: {entry_margin:.1%}\n"
             f"Entry EV/EBITDA: {entry_multiple:.1f}x ({'above' if ovp2>0 else 'below'} median by {abs(ovp2):.1f}x)\n"
             f"Revenue CAGR (hist.): {company_inputs.revenue_cagr_hist:.1%}\n"
@@ -1517,13 +1532,13 @@ with tab_screen:
         try:
                 import urllib.request, json as _json, urllib.error
 
-                # Load API key from Streamlit secrets (secrets.toml: apikey = "...")
-                try:
-                    api_key = st.secrets["apikey"].strip()
-                except Exception:
-                    api_key = ""
+                api_key = st.session_state.get("gemini_key", "").strip()
                 if not api_key:
-                    st.session_state.thesis_text = "⚠️ API key not configured (add apikey to secrets.toml)"
+                    st.session_state.thesis_text = (
+                        "⚠️ Bitte gib deinen Gemini API Key ein (kostenlos unter aistudio.google.com/app/apikey)."
+                        if lang == "de" else
+                        "⚠️ Please enter your Gemini API Key above (free at aistudio.google.com/app/apikey)."
+                    )
                 else:
                     def _gemini_list_models(key):
                         """Return first flash model supporting generateContent, trying v1 then v1beta."""
@@ -1588,60 +1603,21 @@ with tab_screen:
                         thesis_result = _gemini_generate(api_key, model_name, api_ver, prompt)
 
                     st.session_state.thesis_text = thesis_result
-                    st.rerun()
 
         except urllib.error.HTTPError as e:
-            try:
-                api_msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
-            except Exception:
-                api_msg = str(e)
-            if e.code == 429:
-                hint = "429 — Rate limit. Wait ~60s, free quota: 15 req/min / 1500/day."
-            elif e.code in (401, 403):
-                hint = f"Invalid API Key ({e.code})"
-            else:
-                hint = f"HTTP {e.code}: {api_msg}"
-            st.session_state.thesis_text = f"⚠️ {hint}"
-            st.rerun()
+                try:
+                    api_msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
+                except Exception:
+                    api_msg = str(e)
+                if e.code == 429:
+                    hint = "429 — Rate limit. Wait ~60s, free quota: 15 req/min / 1500/day."
+                elif e.code in (401, 403):
+                    hint = f"Invalid API Key ({e.code}) — check aistudio.google.com/app/apikey"
+                else:
+                    hint = f"HTTP {e.code}: {api_msg}"
+                st.session_state.thesis_text = f"⚠️ {hint}"
         except Exception as e:
-            st.session_state.thesis_text = f"⚠️ Unexpected error: {e}"
-            st.rerun()
-
-    # ── Display thesis result ──────────────────────────
-    if st.session_state.thesis_text:
-        raw = st.session_state.thesis_text.strip()
-        cols_t = ["#4f8ef7", "#00cc88", "#ffaa00"]
-
-        if raw.startswith("⚠️"):
-            st.warning(raw)
-        else:
-            import re as _re
-            # Split on lines starting with "1." / "2." / "3." (any format Gemini uses)
-            sections = _re.split(r'(?m)(?=^\s*[1-3]\s*[.):])', raw)
-            sections = [s.strip() for s in sections if s.strip() and _re.match(r'\s*[1-3]\s*[.):]\s*', s)]
-
-            if not sections:
-                # Pure fallback: show as plain text
-                st.text_area("", value=raw, height=300, disabled=True)
-            else:
-                for idx, section in enumerate(sections[:3]):
-                    col = cols_t[idx]
-                    # Remove leading number marker
-                    body = _re.sub(r'^\s*[1-3]\s*[.):]\s*', '', section).strip()
-                    # Clean stray ** at start/end
-                    body = body.strip("*").strip()
-                    # Convert **bold** → html bold
-                    body_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', body)
-                    # Newline to <br>
-                    body_html = body_html.replace("\n", "<br>")
-                    st.markdown(
-                        f'<div style="border-left:4px solid {col};padding:14px 18px;margin:10px 0;'
-                        f'background:rgba(0,0,0,0.15);border-radius:0 6px 6px 0;line-height:1.7">' +
-                        f'<div style="color:{col};font-weight:700;font-size:1.05em;margin-bottom:6px">'
-                        f'{"Operational Improvement" if idx==0 else "Deleveraging / Financial Engineering" if idx==1 else "Strategic / Exit Optionality"}</div>' +
-                        f'<div>{body_html}</div></div>',
-                        unsafe_allow_html=True)
-        st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")
+                st.session_state.thesis_text = f"⚠️ Unexpected error: {e}"
 
 
 # ══ TAB 8: RISK & FLAGS ════════════════════════════════
@@ -1681,7 +1657,7 @@ with tab_flags:
 st.markdown("---")
 fc1, fc2 = st.columns([4,1])
 with fc1:
-    st.caption(f"LBO Screener v4.1 · {ccy_name} {unit} · [R&P] Rosenbaum & Pearl 2020 · [MPE] Mastering PE · [McK] McKinsey Valuation · Not investment advice")
+    st.caption(f"LBO Screener v4.1 · {ccy_name}{sfx} · [R&P] Rosenbaum & Pearl 2020 · [MPE] Mastering PE · [McK] McKinsey Valuation · Not investment advice")
 with fc2:
     out = BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as w:

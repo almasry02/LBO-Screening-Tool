@@ -1576,10 +1576,9 @@ with tab_screen:
     # Models in preference order — all free tier, no truncation issues
     _GROQ_MODELS = [
         "llama-3.3-70b-versatile",   # beste Qualität, aktuell verfügbar
-        "llama-3.1-70b-versatile",   # Fallback 70b
-        "llama3-70b-8192",           # ältere 70b Variante
         "llama-3.1-8b-instant",      # schnell, klein
-        "llama3-8b-8192",            # letzter Fallback
+        "gemma2-9b-it",              # Google Gemma Fallback
+        "mixtral-8x7b-32768",        # Mixtral Fallback
     ]
 
     def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
@@ -1655,7 +1654,7 @@ with tab_screen:
     api_key_val = st.secrets.get("grok_api", "").strip()
 
     if st.session_state.thesis_step > 0 and not api_key_val:
-        st.warning("⚠️ Groq API key not configured — add 'grok_api' to Streamlit secrets.")
+        st.warning("⚠️ Groq API key not configured — add 'groq_api' to Streamlit secrets.")
         st.session_state.thesis_step = 0
 
     elif st.session_state.thesis_step == 1:

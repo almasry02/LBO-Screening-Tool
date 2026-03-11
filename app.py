@@ -1575,33 +1575,12 @@ with tab_screen:
     # ── Groq API call (OpenAI-compatible endpoint) ─────────────────────────
     # Models in preference order — all free tier, no truncation issues
     _GROQ_MODELS = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
-        "llama3-70b-8192",
-        "mixtral-8x7b-32768",
-        "llama3-8b-8192",
+        "llama-3.3-70b-versatile",   # beste Qualität, aktuell verfügbar
+        "llama-3.1-70b-versatile",   # Fallback 70b
+        "llama3-70b-8192",           # ältere 70b Variante
+        "llama-3.1-8b-instant",      # schnell, klein
+        "llama3-8b-8192",            # letzter Fallback
     ]
-
-    def _groq_call(key, prompt_text, max_tok=1200):
-        """Call Groq chat completions API. Returns response text."""
-        body = _uj_mod.dumps({
-            "model": _GROQ_MODELS[0],
-            "messages": [
-                {"role": "system", "content": "You are a senior private equity screening analyst. Be concise and precise. Plain text only — no markdown, no bold, no asterisks."},
-                {"role": "user",   "content": prompt_text},
-            ],
-            "max_tokens": max_tok,
-            "temperature": 0.3,
-        }).encode()
-        req = _ul_mod.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-            method="POST",
-        )
-        with _ul_mod.urlopen(req, timeout=45) as r:
-            resp = _uj_mod.loads(r.read())
-            return resp["choices"][0]["message"]["content"]
 
     def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
         """Try each Groq model in order until one succeeds."""
@@ -1627,12 +1606,13 @@ with tab_screen:
                     resp = _uj_mod.loads(r.read())
                     return resp["choices"][0]["message"]["content"], model
             except _ue_mod.HTTPError as e:
-                if e.code in (401, 403):
-                    raise  # bad key — no point retrying
+                if e.code == 401:
+                    raise  # ungültiger Key — sofort abbrechen
+                # 403/404 = Modell nicht verfügbar → nächstes versuchen
                 last_err = e
             except Exception as e:
                 last_err = e
-        raise last_err or RuntimeError("No Groq model responded")
+        raise last_err or RuntimeError("Kein Groq-Modell verfügbar")
 
     def _run_step(key, prompt_text, step_name):
         try:
@@ -1642,12 +1622,15 @@ with tab_screen:
             st.session_state.thesis_sections[f"_model_{step_name}"] = model_used
             return True
         except _ue_mod.HTTPError as e:
-            try:    msg = _uj_mod.loads(e.read()).get("error", {}).get("message", str(e))
-            except: msg = str(e)
+            try:
+                err_body = e.read()
+                msg = _uj_mod.loads(err_body).get("error", {}).get("message", str(e))
+            except Exception:
+                msg = str(e)
             st.session_state.thesis_sections[step_name] = f"⚠️ HTTP {e.code}: {msg}"
             return False
         except Exception as e:
-            st.session_state.thesis_sections[step_name] = f"⚠️ Error: {e}"
+            st.session_state.thesis_sections[step_name] = f"⚠️ Fehler: {e}"
             return False
 
     # ── Run button: triggers step 1 ────────────────────────────────────────

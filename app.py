@@ -1567,7 +1567,7 @@ with tab_screen:
             f"Downside IRR: {results.downside_irr:.1%} | Downside MOIC: {results.downside_moic:.2f}x\n"
         )
 
-        def _gcall(key, model, api_ver, text, max_tok=2500):
+        def _gcall(key, model, api_ver, text, max_tok=2500000):
             body = _uj.dumps({
                 "contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.5},

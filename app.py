@@ -1512,38 +1512,62 @@ with tab_screen:
         _mdscr = f"{min(results.dscr_series):.2f}x" if results.dscr_series else "n/a"
 
         prompt = (
-            "You are a private equity screening analyst.\n"
-            "Assess whether this company is suitable for an LBO at early screening stage.\n"
-            "Every argument must reference a specific metric from the data below.\n"
-            "No general statements. No markdown. No bold. Plain text only.\n\n"
-            "Output exactly these four sections, each header on its own line:\n\n"
-            "VERDICT\n"
-            "WHY THIS DEAL COULD WORK\n"
-            "KEY RISKS\n"
-            "WHAT MUST BE TRUE\n\n"
-            "VERDICT: one sentence — LBO-suitable or not and why.\n"
-            "WHY THIS DEAL COULD WORK: 3 numbered points each citing a specific metric.\n"
-            "KEY RISKS: 3 numbered points. Analyze revenue volatility, DSCR cushion, "
-            "entry leverage, cash conversion, and value creation concentration "
-            "(reliance on multiple expansion vs operational growth). Each must cite the metric.\n"
-            "WHAT MUST BE TRUE: 3 numbered quantified conditions required to hit target returns.\n\n"
+            "You are a senior private equity screening analyst writing a concise deal memo.\n"
+            "Assess this company for LBO suitability at early screening stage.\n"
+            "Every claim must reference a specific metric from the deal data. No general statements.\n"
+            "Use plain text only. No markdown, no bold, no asterisks, no bullet symbols.\n\n"
+            "OUTPUT FORMAT — produce exactly these four sections in this exact order.\n"
+            "Each section header must appear on its own line, uppercase, followed by a colon.\n"
+            "Do not add any text before the first section header.\n\n"
+            "VERDICT:\n"
+            "Write 2-3 sentences: (1) LBO-suitable or not and primary reason citing a metric. "
+            "(2) How this deal could work — identify the deal archetype "
+            "(e.g. deleveraging play, growth LBO, multiple arbitrage, operational improvement) "
+            "and state which combination of factors supports it. "
+            "(3) Assess: 1) Cash flow reliability citing cash conversion and DSCR, "
+            "2) Leverage sustainability citing entry leverage vs covenant, "
+            "3) Entry valuation attractiveness citing EV/EBITDA vs sector median, "
+            "4) Value creation driver concentration citing the split percentages.\n\n"
+            "KEY RISKS:\n"
+            "Write exactly 3 numbered points. Each point must be 2 sentences: "
+            "first sentence states the risk with the specific metric value, "
+            "second sentence interprets the combination or consequence. "
+            "Cover: (1) Revenue volatility risk — cite revenue volatility coefficient and what it implies for debt service. "
+            "(2) DSCR and leverage risk — cite minimum DSCR and entry leverage together, "
+            "state whether the combination is acceptable or dangerous. "
+            "(3) Value creation concentration risk — cite the exact percentages of EBITDA Growth, "
+            "Multiple Expansion, and Debt Paydown; state whether the deal is operationally driven "
+            "or dependent on exit valuation. "
+            "End this section with one synthesis sentence beginning with: "
+            "The deal appears [assessment] but [key dependency].\n\n"
+            "WHAT MUST BE TRUE:\n"
+            "Write exactly 3 numbered quantified conditions required to achieve target IRR. "
+            "Each condition must follow this format: [Metric] must [condition] to [outcome]. "
+            "Condition 1: minimum annual revenue growth rate required to maintain IRR above target. "
+            "Condition 2: minimum EBITDA margin at exit required to justify the entry multiple. "
+            "Condition 3: minimum cash conversion rate required to deleverage to an acceptable exit leverage. "
+            "After the 3 conditions, add these three labeled lines exactly as shown:\n"
+            "Revenue Volatility: [value from data]\n"
+            "Minimum DSCR: [value from data]\n"
+            "Value Creation Split: EBITDA Growth [%] | Multiple Expansion [%] | Debt Paydown [%]\n\n"
             "--- DEAL DATA ---\n"
             f"Company: {company_inputs.company_name}\n"
             f"Industry: {thesis_ind}\n"
             f"Revenue: {sym}{fmt_num(company_inputs.revenue, lang, sfx=sfx)}\n"
-            f"EBITDA Margin: {entry_margin:.1%}\n"
-            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_rel} sector median by {abs(ovp2):.1f}x)\n"
-            f"Revenue CAGR (hist.): {company_inputs.revenue_cagr_hist:.1%}\n"
-            f"Revenue Volatility: {_rv}\n"
+            f"EBITDA Margin (entry): {entry_margin:.1%}\n"
+            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_rel} sector median by {abs(ovp2):.1f}x; sector range {bm_lo2:.1f}x-{bm_hi2:.1f}x)\n"
+            f"Revenue CAGR (historical): {company_inputs.revenue_cagr_hist:.1%}\n"
+            f"Revenue Volatility (StdDev/Mean): {_rv}\n"
             f"Cash Conversion: {results.cash_conversion:.1%}\n"
-            f"Entry Leverage: {results.entry_leverage:.1f}x Net Debt/EBITDA\n"
-            f"Minimum DSCR (hold period): {_mdscr}\n"
-            f"Base IRR: {results.irr:.1%}  |  MOIC: {results.moic:.2f}x\n"
+            f"Entry Leverage: {results.entry_leverage:.1f}x Net Debt/EBITDA (covenant max: {T['max_debt_ebitda']:.1f}x)\n"
+            f"Minimum DSCR over hold period: {_mdscr} (covenant min: {T['min_dscr']:.2f}x)\n"
+            f"Base IRR: {results.irr:.1%} | MOIC: {results.moic:.2f}x | Target IRR: {T['min_irr']:.0%}\n"
             f"LBO Score: {results.lbo_score:.0f}/100\n"
             f"Value Creation Split: EBITDA Growth {eg:.0%} | Multiple Expansion {me:.0%} | Debt Paydown {dp:.0%}\n"
+            f"Downside IRR: {results.downside_irr:.1%} | Downside MOIC: {results.downside_moic:.2f}x\n"
         )
 
-        def _gcall(key, model, api_ver, text, max_tok=1500):
+        def _gcall(key, model, api_ver, text, max_tok=2500):
             body = _uj.dumps({
                 "contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.5},
@@ -1554,7 +1578,7 @@ with tab_screen:
             with _ul.urlopen(req, timeout=30) as r:
                 return _uj.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
 
-        def _grun(key, text, max_tok=1500):
+        def _grun(key, text, max_tok=2500):
             # Model discovery
             for av in ("v1", "v1beta"):
                 try:
@@ -1609,14 +1633,13 @@ with tab_screen:
 
             # Section config: header keyword → (display label, color)
             SECTIONS = [
-                ("VERDICT",                 "Verdict",                "#4f8ef7"),
-                ("WHY THIS DEAL COULD WORK","Why This Deal Could Work","#00cc88"),
-                ("KEY RISKS",               "Key Risks",              "#ff6b6b"),
-                ("WHAT MUST BE TRUE",       "What Must Be True",      "#ffaa00"),
+                ("VERDICT",          "Verdict",          "#4f8ef7"),
+                ("KEY RISKS",        "Key Risks",        "#ff6b6b"),
+                ("WHAT MUST BE TRUE","What Must Be True","#ffaa00"),
             ]
 
-            # Split on the exact section headers the prompt requests
-            header_pattern = r'(?m)^(VERDICT|WHY THIS DEAL COULD WORK|KEY RISKS|WHAT MUST BE TRUE)\s*:?\s*$'
+            # Split on section headers (uppercase, followed by colon)
+            header_pattern = r'(?m)^(VERDICT|KEY RISKS|WHAT MUST BE TRUE)\s*:\s*$'
             parts = _re.split(header_pattern, text)
             # parts = [pre_text, "VERDICT", content, "WHY...", content, ...]
 

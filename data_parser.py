@@ -162,40 +162,23 @@ MOODYS_SHEET_PRIORITY = {
 # ─────────────────────────────────────────────
 
 def detect_currency_and_unit(unit_string: str, lang: str = "en") -> dict:
-    """
-    Detects currency and unit from a string like "tsd USD", "Mio EUR" etc.
-
-    IMPORTANT: All monetary values throughout the app stay in their ORIGINAL unit
-    (thousands, millions, etc.) — NO rescaling is performed.
-    scale_factor is kept for reference only and is NOT applied to data.
-    The y-axis label shows only the currency symbol (e.g. "$") — no unit suffix.
-    """
     s = str(unit_string).lower().strip()
     currency = "USD" if "usd" in s else "EUR" if "eur" in s else "?"
     if any(x in s for x in ["tsd", "tausend", "thousand"]):
-        unit_label_en, unit_label_de = "Thousands", "Tausend"
-        scale_factor, raw_unit = 1_000, "tsd"
+        unit_label, scale_to_millions, raw_unit = "Tausend", 0.001, "tsd"
     elif any(x in s for x in ["mio", "million"]):
-        unit_label_en, unit_label_de = "Millions", "Millionen"
-        scale_factor, raw_unit = 1_000_000, "mio"
+        unit_label, scale_to_millions, raw_unit = "Millionen", 1.0, "mio"
     elif any(x in s for x in ["mrd", "milliard", "billion"]):
-        unit_label_en, unit_label_de = "Billions", "Milliarden"
-        scale_factor, raw_unit = 1_000_000_000, "mrd"
+        unit_label, scale_to_millions, raw_unit = "Milliarden", 1000.0, "mrd"
     else:
-        unit_label_en, unit_label_de = "Units", "Einzel"
-        scale_factor, raw_unit = 1, "units"
-    sym = "€" if currency == "EUR" else "$" if currency == "USD" else ""
-    unit_label = unit_label_de if lang == "de" else unit_label_en
+        unit_label, scale_to_millions, raw_unit = "Einzelwert", 0.000001, "units"
     return {
-        "currency":      currency,
-        "unit_label":    unit_label,
-        "unit_label_en": unit_label_en,
-        "unit_label_de": unit_label_de,
-        "raw_unit":      raw_unit,
-        "scale_factor":  scale_factor,
-        "display":       f"{currency} ({unit_label})",
-        "symbol":        sym,
-        "axis_label":    sym,
+        "currency":         currency,
+        "unit_label":       unit_label,
+        "raw_unit":         raw_unit,
+        "scale_to_millions": scale_to_millions,
+        "display":          f"{currency} ({unit_label})",
+        "symbol":           "€" if currency == "EUR" else "$" if currency == "USD" else "",
     }
 
 

@@ -805,7 +805,7 @@ st.markdown("---")
 # ── KPI ROWS ───────────────────────────────────────────
 k1,k2,k3,k4,k5,k6 = st.columns(6)
 for col,lbl,val in [
-    (k1,"Entry EV",       f"{sym}{fmt_num(results.entry_ev, lang, sfx=sfx)}"),
+    (k1,"Entry EV",       f"{sym}{fmt_num(results.entry_ev, lang)}"),
     (k2,"Entry Leverage", f"{results.entry_leverage:.1f}x"),
     (k3,"DSCR Y1",        f"{results.dscr_base:.2f}x"),
     (k4,"Base IRR",       f"{results.irr:.1%}"),
@@ -819,7 +819,7 @@ for col,lbl,val in [
     (r2a,"Downside IRR",  f"{results.downside_irr:.1%}"),
     (r2b,"Downside MOIC", f"{results.downside_moic:.2f}x"),
     (r2c,"Cash Conv.",    f"{results.cash_conversion:.1%}"),
-    (r2d,"Exit Equity",   f"{sym}{fmt_num(results.exit_equity, lang, sfx=sfx)}"),
+    (r2d,"Exit Equity",   f"{sym}{fmt_num(results.exit_equity, lang)}"),
     (r2e,"Interest Cov.", f"{results.interest_coverage:.1f}x"),
     (r2f,"LBO Score",     f"{results.lbo_score:.0f}/100"),
 ]:
@@ -1504,23 +1504,23 @@ with tab_screen:
     if st.button(L["thesis_run"], type="primary"):
         bm_lo2, bm_hi2 = BENCHMARKS[thesis_ind]; bm_m2 = (bm_lo2 + bm_hi2) / 2
         ovp2 = entry_multiple - bm_m2
-        _above_below = "above" if ovp2 > 0 else "below"
+        _rel = "above" if ovp2 > 0 else "below"
         prompt = (
             "You are a senior PE analyst. Write 3 concise investment thesis bullets for an LBO deal.\n\n"
             f"Industry: {thesis_ind}\n"
             f"Revenue: {sym}{fmt_num(company_inputs.revenue, lang, sfx=sfx)}\n"
             f"EBITDA Margin: {entry_margin:.1%}\n"
-            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_above_below} median by {abs(ovp2):.1f}x)\n"
+            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_rel} median by {abs(ovp2):.1f}x)\n"
             f"Revenue CAGR (hist.): {company_inputs.revenue_cagr_hist:.1%}\n"
             f"Cash Conversion: {results.cash_conversion:.1%}\n"
             f"LBO Score: {results.lbo_score:.0f}/100  IRR: {results.irr:.1%}  MOIC: {results.moic:.2f}x\n"
             f"Entry Leverage: {results.entry_leverage:.1f}x\n"
             f"Value Bridge: EBITDA Growth {eg:.0%} | Multiple Exp. {me:.0%} | Debt Paydown {dp:.0%}\n\n"
-            "Generate exactly 3 bullets numbered 1. 2. 3. — each on its own line.\n"
+            "Generate exactly 3 bullets numbered 1. 2. 3. each on its own line.\n"
             "1. Operational Improvement / EBITDA growth\n"
             "2. Deleveraging / Financial engineering\n"
             "3. Strategic / Buy-and-build or exit optionality\n"
-            "Each bullet: 2-3 sentences. Be specific to the numbers. No preamble. No markdown."
+            "Each bullet: 2-3 sentences. Be specific to the numbers. No preamble. No markdown formatting."
         )
 
         import urllib.request, json as _json, urllib.error
@@ -1532,10 +1532,9 @@ with tab_screen:
                         f"https://generativelanguage.googleapis.com/{api_ver}/models?key={key}",
                         headers={"Content-Type": "application/json"}, method="GET")
                     with urllib.request.urlopen(req, timeout=10) as resp:
-                        data = _json.loads(resp.read())
                         models = [
                             (m["name"], api_ver)
-                            for m in data.get("models", [])
+                            for m in _json.loads(resp.read()).get("models", [])
                             if "generateContent" in m.get("supportedGenerationMethods", [])
                             and "flash" in m["name"].lower()
                         ]
@@ -1546,20 +1545,15 @@ with tab_screen:
             return None, None
 
         def _gemini_generate(key, model_full_name, api_ver, prompt_text):
-            url = (
-                f"https://generativelanguage.googleapis.com/{api_ver}/"
-                f"{model_full_name}:generateContent?key={key}"
-            )
             body = _json.dumps({
                 "contents": [{"parts": [{"text": prompt_text}]}],
                 "generationConfig": {"maxOutputTokens": 700, "temperature": 0.7},
             }).encode()
             req = urllib.request.Request(
-                url, data=body,
-                headers={"Content-Type": "application/json"}, method="POST")
+                f"https://generativelanguage.googleapis.com/{api_ver}/{model_full_name}:generateContent?key={key}",
+                data=body, headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=30) as resp:
-                data = _json.loads(resp.read())
-                return data["candidates"][0]["content"]["parts"][0]["text"]
+                return _json.loads(resp.read())["candidates"][0]["content"]["parts"][0]["text"]
 
         try:
             try:
@@ -1571,24 +1565,20 @@ with tab_screen:
                 st.rerun()
 
             model_name, api_ver = _gemini_list_models(api_key)
+            thesis_result = None
             if model_name is None:
-                thesis_result = None
                 last_err = None
-                for api_ver_try in ("v1", "v1beta"):
+                for av in ("v1", "v1beta"):
                     for mn in ("models/gemini-2.0-flash-001", "models/gemini-2.0-flash",
                                "models/gemini-1.5-flash-001", "models/gemini-1.5-flash"):
                         try:
-                            thesis_result = _gemini_generate(api_key, mn, api_ver_try, prompt)
+                            thesis_result = _gemini_generate(api_key, mn, av, prompt)
                             break
                         except urllib.error.HTTPError as e:
                             last_err = e
-                            if e.code in (401, 403):
-                                raise
-                            continue
-                    if thesis_result:
-                        break
-                if not thesis_result:
-                    raise last_err
+                            if e.code in (401, 403): raise
+                    if thesis_result: break
+                if not thesis_result: raise last_err
             else:
                 thesis_result = _gemini_generate(api_key, model_name, api_ver, prompt)
 
@@ -1596,55 +1586,51 @@ with tab_screen:
             st.rerun()
 
         except urllib.error.HTTPError as e:
-            try:
-                api_msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
-            except Exception:
-                api_msg = str(e)
-            if e.code == 429:
-                hint = "Rate limit (429) — wait ~60s and retry."
-            elif e.code in (401, 403):
-                hint = f"Invalid API key (HTTP {e.code})."
-            else:
-                hint = f"HTTP {e.code}: {api_msg}"
+            try: api_msg = _json.loads(e.read()).get("error", {}).get("message", str(e))
+            except Exception: api_msg = str(e)
+            hint = "Rate limit (429) — wait ~60s." if e.code == 429 else f"HTTP {e.code}: {api_msg}"
             st.session_state.thesis_text = f"⚠️ {hint}"
             st.rerun()
         except Exception as e:
             st.session_state.thesis_text = f"⚠️ Unexpected error: {e}"
             st.rerun()
 
-    # ── Display thesis result ──────────────────────────────────────────────
+    # ── Display thesis ─────────────────────────────────────────────────────
     if st.session_state.thesis_text:
         import re as _re
         raw = st.session_state.thesis_text.strip()
+
         if raw.startswith("⚠️"):
             st.warning(raw)
         else:
-            sections = _re.split(r"(?m)(?=^[1-3][.)]\s)", raw)
-            sections = [s.strip() for s in sections
-                        if s.strip() and _re.match(r"[1-3][.)]\s", s.strip())]
-            if not sections:
-                st.text_area("", value=raw, height=300, label_visibility="collapsed")
+            # Split into 3 numbered sections
+            parts = _re.split(r"(?m)(?=^[1-3][.)]\s)", raw)
+            parts = [p.strip() for p in parts if p.strip() and _re.match(r"[1-3][.)]\s", p.strip())]
+
+            labels = ["01 · Operational Improvement",
+                      "02 · Deleveraging & Financial Engineering",
+                      "03 · Strategic & Exit Optionality"]
+
+            if not parts:
+                # Fallback: plain box, always shows everything
+                st.markdown(
+                    f'<div style="background:#1e2130;border:1px solid #3a3f55;border-radius:6px;' +
+                    f'padding:16px 20px;white-space:pre-wrap;font-size:.92em;line-height:1.75;color:#dde">' +
+                    f'{raw}</div>',
+                    unsafe_allow_html=True)
             else:
-                card_titles = ["01 · Operational Improvement",
-                               "02 · Deleveraging & Financial Engineering",
-                               "03 · Strategic & Exit Optionality"]
-                card_colors = ["#4f8ef7", "#00cc88", "#ffaa00"]
-                cols_th = st.columns(3)
-                for idx, col in enumerate(cols_th):
-                    if idx >= len(sections):
-                        break
-                    body = _re.sub(r"^[1-3][.)]\s*", "", sections[idx]).strip().replace("**", "")
-                    c = card_colors[idx]
-                    with col:
-                        st.markdown(
-                            f'<div style="border-top:3px solid {c};padding:14px 12px 12px;'
-                            f'background:rgba(0,0,0,0.18);border-radius:4px;min-height:180px">'
-                            f'<div style="color:{c};font-weight:700;font-size:.82em;'
-                            f'letter-spacing:.06em;margin-bottom:8px;text-transform:uppercase">'
-                            f'{card_titles[idx]}</div>'
-                            f'<div style="font-size:.9em;line-height:1.7;color:#dde">{body}</div>'
-                            f'</div>',
-                            unsafe_allow_html=True)
+                for idx, part in enumerate(parts[:3]):
+                    body = _re.sub(r"^[1-3][.)]\s*", "", part).strip().replace("**", "")
+                    label = labels[idx] if idx < len(labels) else f"0{idx+1}"
+                    st.markdown(
+                        f'<div style="background:#1e2130;border-left:3px solid #4f8ef7;' +
+                        f'border-radius:0 6px 6px 0;padding:14px 18px;margin-bottom:10px">' +
+                        f'<div style="color:#4f8ef7;font-weight:700;font-size:.8em;' +
+                        f'letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px">{label}</div>' +
+                        f'<div style="font-size:.92em;line-height:1.75;color:#dde;white-space:pre-wrap">{body}</div>' +
+                        f'</div>',
+                        unsafe_allow_html=True)
+
         st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")
 
 # ══ TAB 8: RISK & FLAGS ════════════════════════════════

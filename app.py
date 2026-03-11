@@ -1553,7 +1553,7 @@ with tab_screen:
                         )
                         body = _json.dumps({
                             "contents": [{"parts": [{"text": prompt_text}]}],
-                            "generationConfig": {"maxOutputTokens": 700, "temperature": 0.7},
+                            "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.7},
                         }).encode()
                         req = urllib.request.Request(
                             url, data=body,
@@ -1612,65 +1612,66 @@ with tab_screen:
         if raw.startswith("⚠️"):
             st.warning(raw)
         else:
-            # ── DEBUG EXPANDER ── shows exact raw API string so rendering bugs can be fixed
-            with st.expander("🔍 Debug: Raw API response (copy & send to developer)", expanded=False):
-                st.code(repr(raw), language=None)
-                st.text_area("Plain view", value=raw, height=300, key="thesis_debug_plain", disabled=True)
-
             import re as _re
 
-            # Normalise literal \n escape sequences Gemini sometimes returns
-            normalized = raw.replace("\\n", "\n")
+            # ── DEBUG: always visible so truncation is immediately obvious
+            with st.expander("🔍 Debug — Raw API response", expanded=False):
+                # st.code has no length limit and shows the full repr
+                st.code(raw, language=None)
 
-            BULLET_COLORS = ["#4f8ef7", "#00cc88", "#ffaa00"]
-            BULLET_LABELS = ["Operational Improvement", "Deleveraging", "Strategic / Exit"]
+            # ── Normalize: replace literal \n escapes with real newlines
+            text = raw.replace("\\n", "\n").strip()
 
-            # ── Strategy 1: find numbered bullets anywhere in the text
-            # Matches "1.", "1)", "**1.**", "**1)**" with any content after
-            pattern = r'(?:^|\n)\s*\**\s*([1-3])[.)]\**\s*(.*?)(?=(?:\n\s*\**\s*[1-3][.)]\**)|$)'
-            matches = _re.findall(pattern, normalized, flags=_re.DOTALL)
+            # ── Strip preamble lines like "Here are 3 bullets:" before the first number
+            text = _re.sub(r'^.*?(?=\n\s*\d+[\.\)]|\n\s*\*\*\s*\d+[\.\)])', '', text,
+                           count=1, flags=_re.DOTALL).strip()
+            # If no preamble found the regex eats nothing — safe
 
-            if len(matches) >= 2:
-                for num_str, content in matches[:3]:
-                    i = int(num_str) - 1
-                    color = BULLET_COLORS[i]
-                    text = content.strip()
-                    # Strip trailing ** left after "**1." capture e.g. "Operational**\n..."
-                    text = _re.sub(r'^\*+\n?', '', text).strip()
-                    # Strip full bold title line e.g. "**Operational Improvement**\n"
-                    text = _re.sub(r'^\*\*[^*]{3,80}\*\*\s*\n?', '', text).strip()
-                    # Strip partial title where number consumed opening **: "Title Text**\n"
-                    text = _re.sub(r'^[^*\n]{3,80}\*\*\s*\n', '', text).strip()
+            # ── Ensure double newline before each numbered bullet (1. / 2. / 3.)
+            # so markdown renders them as separate paragraphs
+            text = _re.sub(r'\n(\s*\d+[\.\)]\s)', r'\n\n\1', text)
+
+            # ── Render with native st.markdown — Streamlit handles all formatting,
+            # line breaks, bold, lists. No wrapper div → no clipping ever.
+            COLORS = ["#4f8ef7", "#00cc88", "#ffaa00"]
+            LABELS = ["Operational Improvement", "Deleveraging", "Strategic / Exit"]
+
+            # Split into sections on numbered bullets
+            parts = _re.split(r'(?m)^(\s*\d+[\.\)]\s)', text)
+            # parts alternates: [pre, "1. ", content1, "2. ", content2, ...]
+
+            # Collect (bullet_number, content) pairs
+            sections = []
+            i = 0
+            while i < len(parts):
+                chunk = parts[i]
+                if _re.match(r'^\s*\d+[\.\)]\s$', chunk):
+                    content = parts[i + 1] if i + 1 < len(parts) else ""
+                    sections.append(content.strip())
+                    i += 2
+                else:
+                    i += 1
+
+            if len(sections) >= 2:
+                for idx, content in enumerate(sections[:3]):
+                    color = COLORS[idx]
+                    label = LABELS[idx] if idx < len(LABELS) else f"Point {idx+1}"
+                    # Colored header via HTML (label only, no content)
                     st.markdown(
                         f'<div style="border-left:4px solid {color};'
-                        f'padding:4px 0 4px 14px;margin:18px 0 6px 0">'
-                        f'<span style="color:{color};font-weight:700;font-size:.95em">'
-                        f'{i+1}. {BULLET_LABELS[i]}</span></div>',
+                        f'padding:4px 0 4px 12px;margin:20px 0 4px 0">'
+                        f'<span style="color:{color};font-weight:700">'
+                        f'{idx+1}. {label}</span></div>',
                         unsafe_allow_html=True
                     )
-                    st.text_area(
-                        label="", value=text,
-                        height=max(100, min(450, len(text) // 4 + text.count("\n") * 20 + 60)),
-                        disabled=True, key=f"thesis_block_{i}",
-                        label_visibility="collapsed",
-                    )
+                    # Content: strip leading bold title (Gemini repeats it after the number)
+                    body = _re.sub(r'^\*\*[^\n*]{2,80}\*\*:?\s*\n?', '', content).strip()
+                    body = _re.sub(r'^[^\n*]{2,80}\*\*:?\s*\n', '', body).strip()
+                    # Plain native markdown — full text, correct contrast, never clips
+                    st.markdown(body if body else content)
             else:
-                # ── Strategy 2: split on section headers (bold lines)
-                sections = _re.split(r'\n(?=\*\*[A-Z])', normalized)
-                sections = [s.strip() for s in sections if s.strip()]
-                # Strip any preamble (text before first bold header or first number)
-                preamble_end = _re.search(r'(?m)^[\*\s]*[1-3][.)]\s|\n\*\*[A-Z]', normalized)
-                if preamble_end:
-                    normalized = normalized[preamble_end.start():].strip()
-
-                # ── Final fallback: dump everything verbatim — guaranteed complete
-                st.info("ℹ️ Could not split into 3 bullets — showing full response. Use the debug expander above to report the format.")
-                st.text_area(
-                    label="Full AI Response", value=normalized,
-                    height=max(200, min(700, len(normalized) // 4 + normalized.count("\n") * 20 + 80)),
-                    disabled=True, key="thesis_fallback",
-                    label_visibility="visible",
-                )
+                # Fallback: render everything as-is
+                st.markdown(text)
 
         st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")
 

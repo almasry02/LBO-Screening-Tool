@@ -1576,14 +1576,15 @@ with tab_screen:
     # Models in preference order — all free tier, no truncation issues
     _GROQ_MODELS = [
         "llama-3.3-70b-versatile",   # beste Qualität, aktuell verfügbar
+        "llama-3.1-70b-versatile",   # Fallback 70b
+        "llama3-70b-8192",           # ältere 70b Variante
         "llama-3.1-8b-instant",      # schnell, klein
-        "gemma2-9b-it",              # Google Gemma Fallback
-        "mixtral-8x7b-32768",        # Mixtral Fallback
+        "llama3-8b-8192",            # letzter Fallback
     ]
 
     def _groq_call_with_fallback(key, prompt_text, max_tok=1200):
-        """Try each Groq model in order until one succeeds."""
-        last_err = None
+        """Try each Groq model in order until one succeeds. Collects per-model errors for diagnosis."""
+        model_errors = []
         for model in _GROQ_MODELS:
             try:
                 body = _uj_mod.dumps({
@@ -1605,13 +1606,22 @@ with tab_screen:
                     resp = _uj_mod.loads(r.read())
                     return resp["choices"][0]["message"]["content"], model
             except _ue_mod.HTTPError as e:
+                # Read body IMMEDIATELY before the stream closes
+                try:
+                    raw = e.read()
+                    err_msg = _uj_mod.loads(raw).get("error", {}).get("message", raw.decode(errors="replace"))
+                except Exception:
+                    err_msg = str(e)
+                model_errors.append((model, e.code, err_msg))
                 if e.code == 401:
-                    raise  # ungültiger Key — sofort abbrechen
-                # 403/404 = Modell nicht verfügbar → nächstes versuchen
-                last_err = e
+                    raise RuntimeError(f"HTTP 401 – Ungültiger API-Key: {err_msg}")
+                # 403/404/429 → try next model
             except Exception as e:
-                last_err = e
-        raise last_err or RuntimeError("Kein Groq-Modell verfügbar")
+                model_errors.append((model, "?", str(e)))
+
+        # All models failed — surface full diagnostic
+        lines = "\n".join(f"  {m}: HTTP {c} – {msg}" for m, c, msg in model_errors)
+        raise RuntimeError(f"Kein Groq-Modell verfügbar. Details:\n{lines}")
 
     def _run_step(key, prompt_text, step_name):
         try:
@@ -1620,16 +1630,9 @@ with tab_screen:
             st.session_state.thesis_sections[f"_raw_{step_name}"] = result
             st.session_state.thesis_sections[f"_model_{step_name}"] = model_used
             return True
-        except _ue_mod.HTTPError as e:
-            try:
-                err_body = e.read()
-                msg = _uj_mod.loads(err_body).get("error", {}).get("message", str(e))
-            except Exception:
-                msg = str(e)
-            st.session_state.thesis_sections[step_name] = f"⚠️ HTTP {e.code}: {msg}"
-            return False
         except Exception as e:
-            st.session_state.thesis_sections[step_name] = f"⚠️ Fehler: {e}"
+            # _groq_call_with_fallback already reads + formats all HTTP error details
+            st.session_state.thesis_sections[step_name] = f"⚠️ {e}"
             return False
 
     # ── Run button: triggers step 1 ────────────────────────────────────────
@@ -1654,7 +1657,7 @@ with tab_screen:
     api_key_val = st.secrets.get("grok_api", "").strip()
 
     if st.session_state.thesis_step > 0 and not api_key_val:
-        st.warning("⚠️ Groq API key not configured — add 'groq_api' to Streamlit secrets.")
+        st.warning("⚠️ Groq API key not configured — add 'grok_api' to Streamlit secrets.")
         st.session_state.thesis_step = 0
 
     elif st.session_state.thesis_step == 1:

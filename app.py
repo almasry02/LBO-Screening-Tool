@@ -448,7 +448,7 @@ _ss_defaults = {
     "T": DEFAULT_T.copy(), "F": DEFAULT_F.copy(),
     "ccy": detect_currency_and_unit("EUR", lang="en"), "lang": "en",
     "screener_companies": [], "screener_results": [],
-    "thesis_text": "", "uploaded_data": None,
+    "thesis_text": "", "thesis_step": 0, "thesis_sections": {}, "uploaded_data": None,
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -1501,192 +1501,235 @@ with tab_screen:
     with th1:
         st.caption("AI-powered LBO screening memo — verdict, value creation drivers, key risks and investment conditions")
 
-    if st.button(L["thesis_run"], type="primary"):
-        import urllib.request as _ul, urllib.error as _ue, json as _uj
-
+    # ── Helper: build deal data block (shared across all prompts) ──────────
+    def _deal_data_block():
         bm_lo2, bm_hi2 = BENCHMARKS[thesis_ind]
         bm_m2  = (bm_lo2 + bm_hi2) / 2
         ovp2   = entry_multiple - bm_m2
         _rel   = "above" if ovp2 > 0 else "below"
         _rv    = f"{hist_metrics.revenue_volatility:.1%}" if hist_metrics else "n/a"
         _mdscr = f"{min(results.dscr_series):.2f}x" if results.dscr_series else "n/a"
-
-        prompt = (
-            "You are a senior private equity screening analyst writing a concise deal memo.\n"
-            "Assess this company for LBO suitability at early screening stage.\n"
-            "Every claim must reference a specific metric from the deal data. No general statements.\n"
-            "Use plain text only. No markdown, no bold, no asterisks, no bullet symbols.\n\n"
-            "OUTPUT FORMAT — produce exactly these four sections in this exact order.\n"
-            "Each section header must appear on its own line, uppercase, followed by a colon.\n"
-            "Do not add any text before the first section header.\n\n"
-            "VERDICT:\n"
-            "Write 2-3 sentences: (1) LBO-suitable or not and primary reason citing a metric. "
-            "(2) How this deal could work — identify the deal archetype "
-            "(e.g. deleveraging play, growth LBO, multiple arbitrage, operational improvement) "
-            "and state which combination of factors supports it. "
-            "(3) Assess: 1) Cash flow reliability citing cash conversion and DSCR, "
-            "2) Leverage sustainability citing entry leverage vs covenant, "
-            "3) Entry valuation attractiveness citing EV/EBITDA vs sector median, "
-            "4) Value creation driver concentration citing the split percentages.\n\n"
-            "KEY RISKS:\n"
-            "Write exactly 3 numbered points. Each point must be 2 sentences: "
-            "first sentence states the risk with the specific metric value, "
-            "second sentence interprets the combination or consequence. "
-            "Cover: (1) Revenue volatility risk — cite revenue volatility coefficient and what it implies for debt service. "
-            "(2) DSCR and leverage risk — cite minimum DSCR and entry leverage together, "
-            "state whether the combination is acceptable or dangerous. "
-            "(3) Value creation concentration risk — cite the exact percentages of EBITDA Growth, "
-            "Multiple Expansion, and Debt Paydown; state whether the deal is operationally driven "
-            "or dependent on exit valuation. "
-            "End this section with one synthesis sentence beginning with: "
-            "The deal appears [assessment] but [key dependency].\n\n"
-            "WHAT MUST BE TRUE:\n"
-            "Write exactly 3 numbered quantified conditions required to achieve target IRR. "
-            "Each condition must follow this format: [Metric] must [condition] to [outcome]. "
-            "Condition 1: minimum annual revenue growth rate required to maintain IRR above target. "
-            "Condition 2: minimum EBITDA margin at exit required to justify the entry multiple. "
-            "Condition 3: minimum cash conversion rate required to deleverage to an acceptable exit leverage. "
-            "After the 3 conditions, add these three labeled lines exactly as shown:\n"
-            "Revenue Volatility: [value from data]\n"
-            "Minimum DSCR: [value from data]\n"
-            "Value Creation Split: EBITDA Growth [%] | Multiple Expansion [%] | Debt Paydown [%]\n\n"
+        return (
             "--- DEAL DATA ---\n"
-            f"Company: {company_inputs.company_name}\n"
-            f"Industry: {thesis_ind}\n"
-            f"Revenue: {sym}{fmt_num(company_inputs.revenue, lang, sfx=sfx)}\n"
-            f"EBITDA Margin (entry): {entry_margin:.1%}\n"
-            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_rel} sector median by {abs(ovp2):.1f}x; sector range {bm_lo2:.1f}x-{bm_hi2:.1f}x)\n"
-            f"Revenue CAGR (historical): {company_inputs.revenue_cagr_hist:.1%}\n"
-            f"Revenue Volatility (StdDev/Mean): {_rv}\n"
-            f"Cash Conversion: {results.cash_conversion:.1%}\n"
-            f"Entry Leverage: {results.entry_leverage:.1f}x Net Debt/EBITDA (covenant max: {T['max_debt_ebitda']:.1f}x)\n"
-            f"Minimum DSCR over hold period: {_mdscr} (covenant min: {T['min_dscr']:.2f}x)\n"
-            f"Base IRR: {results.irr:.1%} | MOIC: {results.moic:.2f}x | Target IRR: {T['min_irr']:.0%}\n"
-            f"LBO Score: {results.lbo_score:.0f}/100\n"
-            f"Value Creation Split: EBITDA Growth {eg:.0%} | Multiple Expansion {me:.0%} | Debt Paydown {dp:.0%}\n"
+            f"Company: {company_inputs.company_name} | Industry: {thesis_ind}\n"
+            f"Revenue: {sym}{fmt_num(company_inputs.revenue, lang, sfx=sfx)} | EBITDA Margin: {entry_margin:.1%}\n"
+            f"Entry EV/EBITDA: {entry_multiple:.1f}x ({_rel} sector median by {abs(ovp2):.1f}x; range {bm_lo2:.1f}x-{bm_hi2:.1f}x)\n"
+            f"Revenue CAGR (hist.): {company_inputs.revenue_cagr_hist:.1%} | Revenue Volatility (StdDev/Mean): {_rv}\n"
+            f"Cash Conversion: {results.cash_conversion:.1%} | Entry Leverage: {results.entry_leverage:.1f}x (covenant max: {T['max_debt_ebitda']:.1f}x)\n"
+            f"Min DSCR (hold period): {_mdscr} (covenant min: {T['min_dscr']:.2f}x)\n"
+            f"Base IRR: {results.irr:.1%} | MOIC: {results.moic:.2f}x | Target IRR: {T['min_irr']:.0%} | LBO Score: {results.lbo_score:.0f}/100\n"
+            f"Value Creation: EBITDA Growth {eg:.0%} | Multiple Expansion {me:.0%} | Debt Paydown {dp:.0%}\n"
             f"Downside IRR: {results.downside_irr:.1%} | Downside MOIC: {results.downside_moic:.2f}x\n"
         )
 
-        def _gcall(key, model, api_ver, text, max_tok=2500):
-            body = _uj.dumps({
-                "contents": [{"parts": [{"text": text}]}],
-                "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.5},
-            }).encode()
-            req = _ul.Request(
-                f"https://generativelanguage.googleapis.com/{api_ver}/{model}:generateContent?key={key}",
-                data=body, headers={"Content-Type": "application/json"}, method="POST")
-            with _ul.urlopen(req, timeout=30) as r:
-                return _uj.loads(r.read())["candidates"][0]["content"]["parts"][0]["text"]
+    # Three focused prompts — each fits comfortably in Free Tier token limits
+    def _prompt_verdict(data):
+        return (
+            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
+            "Write the VERDICT section for this LBO deal. Maximum 120 words.\n"
+            "Include: (1) LBO-suitable or not + primary reason with metric. "
+            "(2) Deal archetype: deleveraging play / growth LBO / multiple arbitrage / operational improvement — cite the supporting metrics. "
+            "(3) One sentence each on: cash flow reliability (cite cash conversion + min DSCR), "
+            "leverage sustainability (cite entry leverage vs covenant), "
+            "entry valuation (cite EV/EBITDA vs sector median), "
+            "value creation concentration (cite the three split percentages).\n"
+            "Start your response directly with the assessment. No header needed.\n\n"
+            + data
+        )
 
-        def _grun(key, text, max_tok=2500):
-            # Model discovery
-            for av in ("v1", "v1beta"):
+    def _prompt_risks(data):
+        return (
+            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
+            "Write the KEY RISKS section for this LBO deal. Maximum 150 words.\n"
+            "Write exactly 3 numbered risks. Each risk: 2 sentences — first states the risk with the exact metric value, "
+            "second interprets the consequence or combination effect.\n"
+            "Risk 1: Revenue volatility — cite the StdDev/Mean coefficient and its implication for debt service.\n"
+            "Risk 2: DSCR + leverage combination — cite both minimum DSCR and entry leverage, "
+            "state whether together they are acceptable or dangerous.\n"
+            "Risk 3: Value creation concentration — cite all three split percentages (EBITDA Growth, Multiple Expansion, Debt Paydown), "
+            "state if deal is operationally driven or exit-dependent.\n"
+            "End with one synthesis sentence: The deal appears [X] but [key dependency].\n"
+            "Start directly with '1.' — no section header.\n\n"
+            + data
+        )
+
+    def _prompt_conditions(data):
+        return (
+            "You are a senior PE screening analyst. Plain text only. No markdown, no bold, no asterisks.\n"
+            "Write the WHAT MUST BE TRUE section for this LBO deal. Maximum 120 words.\n"
+            "Write exactly 3 numbered conditions required to achieve target IRR. "
+            "Format each as: [Metric] must [condition] to [outcome].\n"
+            "Condition 1: minimum annual revenue growth rate to maintain IRR above target.\n"
+            "Condition 2: minimum EBITDA margin at exit to justify the entry multiple.\n"
+            "Condition 3: minimum cash conversion rate to deleverage to acceptable exit leverage.\n"
+            "After condition 3, on new lines, output exactly:\n"
+            "Revenue Volatility: [value]\n"
+            "Minimum DSCR: [value]\n"
+            "Value Creation Split: EBITDA Growth [%] | Multiple Expansion [%] | Debt Paydown [%]\n"
+            "Start directly with '1.' — no section header.\n\n"
+            + data
+        )
+
+    import urllib.request as _ul_mod, urllib.error as _ue_mod, json as _uj_mod
+
+    def _gcall_g(key, model, api_ver, text, max_tok=800):
+        body = _uj_mod.dumps({
+            "contents": [{"parts": [{"text": text}]}],
+            "generationConfig": {"maxOutputTokens": max_tok, "temperature": 0.3},
+        }).encode()
+        req = _ul_mod.Request(
+            f"https://generativelanguage.googleapis.com/{api_ver}/{model}:generateContent?key={key}",
+            data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with _ul_mod.urlopen(req, timeout=45) as r:
+            resp = _uj_mod.loads(r.read())
+            return resp["candidates"][0]["content"]["parts"][0]["text"]
+
+    def _find_model(key):
+        """Return (model_name, api_ver) for best available flash model."""
+        for av in ("v1", "v1beta"):
+            try:
+                req = _ul_mod.Request(
+                    f"https://generativelanguage.googleapis.com/{av}/models?key={key}",
+                    headers={"Content-Type": "application/json"}, method="GET")
+                with _ul_mod.urlopen(req, timeout=10) as r:
+                    models = [
+                        (m["name"], av)
+                        for m in _uj_mod.loads(r.read()).get("models", [])
+                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                        and any(x in m["name"].lower() for x in ("flash", "pro"))
+                    ]
+                    # prefer gemini-2.0-flash, then 1.5-flash, then pro
+                    for pref in ("2.0-flash", "1.5-flash", "flash", "pro"):
+                        for mn, av2 in models:
+                            if pref in mn.lower():
+                                return mn, av2
+            except Exception:
+                pass
+        # hard-coded fallback list
+        for av in ("v1", "v1beta"):
+            for mn in ("models/gemini-2.0-flash", "models/gemini-2.0-flash-001",
+                       "models/gemini-1.5-flash", "models/gemini-1.5-flash-001"):
                 try:
-                    req = _ul.Request(
-                        f"https://generativelanguage.googleapis.com/{av}/models?key={key}",
-                        headers={"Content-Type": "application/json"}, method="GET")
-                    with _ul.urlopen(req, timeout=10) as r:
-                        found = [
-                            (m["name"], av)
-                            for m in _uj.loads(r.read()).get("models", [])
-                            if "generateContent" in m.get("supportedGenerationMethods", [])
-                            and "flash" in m["name"].lower()
-                        ]
-                        if found:
-                            return _gcall(key, found[0][0], found[0][1], text, max_tok)
+                    _gcall_g(key, mn, av, "ping", max_tok=5)
+                    return mn, av
+                except _ue_mod.HTTPError as e:
+                    if e.code in (401, 403): raise
                 except Exception:
                     pass
-            # Brute-force fallback
-            last_err = None
-            for av in ("v1", "v1beta"):
-                for mn in ("models/gemini-2.0-flash-001", "models/gemini-2.0-flash",
-                           "models/gemini-1.5-flash-001", "models/gemini-1.5-flash"):
-                    try:
-                        return _gcall(key, mn, av, text, max_tok)
-                    except _ue.HTTPError as e:
-                        last_err = e
-                        if e.code in (401, 403): raise
-            raise last_err or RuntimeError("No Gemini model responded")
+        raise RuntimeError("No Gemini model available")
 
+    def _run_step(key, prompt_text, step_name):
         try:
-            api_key = st.secrets.get("apikey", "").strip()
-            if not api_key:
-                st.session_state.thesis_text = "⚠️ API key not configured — add 'apikey' to Streamlit secrets."
-            else:
-                st.session_state.thesis_text = _grun(api_key, prompt)
-        except _ue.HTTPError as e:
-            try:    msg = _uj.loads(e.read()).get("error", {}).get("message", str(e))
+            model, av = _find_model(key)
+            result = _gcall_g(key, model, av, prompt_text, max_tok=800)
+            st.session_state.thesis_sections[step_name] = result
+            st.session_state.thesis_sections[f"_raw_{step_name}"] = result
+            return True
+        except _ue_mod.HTTPError as e:
+            try:    msg = _uj_mod.loads(e.read()).get("error", {}).get("message", str(e))
             except: msg = str(e)
-            st.session_state.thesis_text = f"⚠️ HTTP {e.code}: {msg}"
+            st.session_state.thesis_sections[step_name] = f"⚠️ HTTP {e.code}: {msg}"
+            return False
         except Exception as e:
-            st.session_state.thesis_text = f"⚠️ Error: {e}"
+            st.session_state.thesis_sections[step_name] = f"⚠️ Error: {e}"
+            return False
+
+    # ── Run button: triggers step 1 ────────────────────────────────────────
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        run_thesis = st.button(L["thesis_run"], type="primary")
+    with col_btn2:
+        if st.session_state.thesis_step > 0 or st.session_state.thesis_sections:
+            if st.button("🔄 Reset", key="thesis_reset"):
+                st.session_state.thesis_step = 0
+                st.session_state.thesis_sections = {}
+                st.session_state.thesis_text = ""
+                st.rerun()
+
+    if run_thesis:
+        st.session_state.thesis_step = 1
+        st.session_state.thesis_sections = {}
+        st.session_state.thesis_text = ""
         st.rerun()
 
-    # ── Display ────────────────────────────────────────────────────────────
-    if st.session_state.thesis_text:
-        import re as _re
-        raw = st.session_state.thesis_text.strip()
-        if raw.startswith("⚠️"):
-            st.warning(raw)
-        else:
-            text = raw.replace("\\n", "\n").strip()
+    # ── Sequential execution: one step per rerun ───────────────────────────
+    api_key_val = st.secrets.get("apikey", "").strip()
 
-            # ── Debug expander: raw AI output ──────────────────────────────
-            with st.expander("🔍 Debug: Raw AI Response", expanded=False):
-                st.text_area(
-                    label=f"Full raw text ({len(text)} chars, {len(text.splitlines())} lines)",
-                    value=text,
-                    height=420,
-                    disabled=True,
-                    key="debug_raw_ai",
-                )
+    if st.session_state.thesis_step > 0 and not api_key_val:
+        st.warning("⚠️ API key not configured — add 'apikey' to Streamlit secrets.")
+        st.session_state.thesis_step = 0
 
-            # Section config: header keyword → (display label, color)
-            SECTIONS = [
-                ("VERDICT",          "Verdict",          "#4f8ef7"),
-                ("KEY RISKS",        "Key Risks",        "#ff6b6b"),
-                ("WHAT MUST BE TRUE","What Must Be True","#ffaa00"),
-            ]
+    elif st.session_state.thesis_step == 1:
+        _data = _deal_data_block()
+        with st.spinner("Generating Verdict…  (1/3)"):
+            ok = _run_step(api_key_val, _prompt_verdict(_data), "VERDICT")
+        st.session_state.thesis_step = 2 if ok else 0
+        st.rerun()
 
-            # Robust split: matches header whether alone on a line or with
-            # inline content immediately after the colon.
-            header_pattern = r'(?m)^(VERDICT|KEY RISKS|WHAT MUST BE TRUE)\s*:\s*'
-            parts = _re.split(header_pattern, text)
-            # parts = [pre_text, "VERDICT", content, "KEY RISKS", content, ...]
+    elif st.session_state.thesis_step == 2:
+        _data = _deal_data_block()
+        with st.spinner("Generating Key Risks…  (2/3)"):
+            ok = _run_step(api_key_val, _prompt_risks(_data), "KEY RISKS")
+        st.session_state.thesis_step = 3 if ok else 0
+        st.rerun()
 
-            # Build ordered dict: header → content
-            found = {}
-            i = 1
-            while i < len(parts) - 1:
-                hdr     = parts[i].strip()
-                content = parts[i + 1].strip() if i + 1 < len(parts) else ""
-                content = _re.sub(r'\*\*', '', content).strip()
-                found[hdr] = content
-                i += 2
+    elif st.session_state.thesis_step == 3:
+        _data = _deal_data_block()
+        with st.spinner("Generating Conditions…  (3/3)"):
+            ok = _run_step(api_key_val, _prompt_conditions(_data), "WHAT MUST BE TRUE")
+        st.session_state.thesis_step = 4 if ok else 0
+        st.rerun()
 
-            # ── Debug expander: parser result ──────────────────────────────
-            with st.expander("🔧 Debug: Parser Result", expanded=False):
-                st.write(f"Sections detected: {list(found.keys())}")
-                for k, v in found.items():
-                    st.caption(f"{k} ({len(v)} chars) — preview: {v[:150]}...")
+    # ── Display completed sections ─────────────────────────────────────────
+    SECTION_CFG = [
+        ("VERDICT",          "Verdict",          "#4f8ef7"),
+        ("KEY RISKS",        "Key Risks",        "#ff6b6b"),
+        ("WHAT MUST BE TRUE","What Must Be True","#ffaa00"),
+    ]
 
-            if found:
-                for key, label, color in SECTIONS:
-                    body = found.get(key, "")
-                    if not body:
-                        continue
-                    st.markdown(
-                        f'<div style="border-left:4px solid {color};'
-                        f'padding:4px 0 4px 12px;margin:20px 0 6px 0">'
-                        f'<span style="color:{color};font-weight:700;font-size:.95em">'
-                        f'{label}</span></div>',
-                        unsafe_allow_html=True
-                    )
-                    st.markdown(body)
+    secs = st.session_state.thesis_sections
+    if secs:
+        # Progress indicator
+        n_done = sum(1 for k, _, _ in SECTION_CFG if k in secs and not secs[k].startswith("⚠️"))
+        n_total = len(SECTION_CFG)
+        if st.session_state.thesis_step in (1, 2, 3):
+            st.progress(n_done / n_total, text=f"Loading… {n_done}/{n_total} sections")
+        elif st.session_state.thesis_step == 4:
+            st.progress(1.0, text="✅ Analysis complete")
+
+        for sec_key, label, color in SECTION_CFG:
+            body = secs.get(sec_key, "")
+            if not body:
+                continue
+            st.markdown(
+                f'<div style="border-left:4px solid {color};'
+                f'padding:4px 0 4px 12px;margin:20px 0 6px 0">'
+                f'<span style="color:{color};font-weight:700;font-size:.95em">'
+                f'{label}</span></div>',
+                unsafe_allow_html=True
+            )
+            if body.startswith("⚠️"):
+                st.warning(body)
             else:
-                st.warning("Parser could not find section headers — rendering raw output below.")
-                st.markdown(text)
-        st.caption("Generated by Google Gemini Flash — analytical support only, not investment advice")
+                st.markdown(body)
+
+        # ── Debug expander ─────────────────────────────────────────────────
+        with st.expander("🔍 Debug: Raw AI Responses", expanded=False):
+            for sec_key, label, _ in SECTION_CFG:
+                raw_key = f"_raw_{sec_key}"
+                raw_val = secs.get(raw_key, secs.get(sec_key, ""))
+                if raw_val:
+                    st.markdown(f"**{label}** ({len(raw_val)} chars, {len(raw_val.splitlines())} lines)")
+                    st.text_area(
+                        label=f"raw_{sec_key}",
+                        value=raw_val,
+                        height=200,
+                        disabled=True,
+                        key=f"dbg_{sec_key}",
+                        label_visibility="collapsed",
+                    )
+
+        st.caption("Generated by Google Gemini — analytical support only, not investment advice")
 
 # ══ TAB 8: RISK & FLAGS ════════════════════════════════
 with tab_flags:
